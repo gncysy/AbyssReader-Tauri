@@ -45,8 +45,8 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const message = useMessage()
 const readingStore = useReadingStore()
 
-const fontSize = computed({ get: () => readingStore.fontSize, set: (val: number) => readingStore.setFontSize(val) })
-const lineHeight = computed({ get: () => readingStore.lineHeight, set: (val: number) => readingStore.setLineHeight(val) })
+const fontSize = computed({ get: () => readingStore.fontSize as number, set: (val: number) => readingStore.setFontSize(val) })
+const lineHeight = computed({ get: () => readingStore.lineHeight as number, set: (val: number) => readingStore.setLineHeight(val) })
 const currentTheme = computed({ get: () => readingStore.theme, set: (val: string) => readingStore.setTheme(val) })
 
 const chapters = ref<Chapter[]>([])
@@ -73,7 +73,6 @@ function setTheme(value: string) { readingStore.setTheme(value) }
 async function loadChapters() {
   if (props.initialChapters && props.initialChapters.length > 0) {
     chapters.value = props.initialChapters
-    // 如果从目录点击进来的，强制使用指定章节
     if ((props.book as any)?._forceChapterIndex !== undefined) {
       chapterIndex.value = (props.book as any)._forceChapterIndex
       await loadContent()
@@ -111,7 +110,7 @@ async function loadContent() {
   try {
     if (props.book?.bookUrl?.startsWith('local://')) {
       const bookId = props.book.bookUrl.replace('local://', '')
-      content.value = (await readerApi.getLocalChapterContent(bookId, (currentChapter.value?.id ?? 0) as unknown as string) || ''
+      content.value = (await readerApi.getLocalChapterContent(bookId, currentChapter.value.id) as string) || ''
       await nextTick(); if (contentRef.value) contentRef.value.scrollTop = 0; return
     }
     const allSources = (await store.get('bookSource')) || []
