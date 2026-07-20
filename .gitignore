@@ -1,0 +1,24 @@
+# Node.js
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust
+src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 环境
+.env
+.env.local
