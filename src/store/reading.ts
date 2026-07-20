@@ -28,8 +28,8 @@ export const useReadingStore = defineStore('reading', () => {
   }
 
   function setTheme(val: string) { theme.value = val; saveSettings() }
-  function setFontSize(val: number) { fontSize.value = Math.max(READER.FONT_SIZE_MIN, Math.min(READER.FONT_SIZE_MAX, val)); saveSettings() }
-  function setLineHeight(val: number) { lineHeight.value = Math.max(READER.LINE_HEIGHT_MIN, Math.min(READER.LINE_HEIGHT_MAX, val)); saveSettings() }
+  function setFontSize(val: number) { fontSize.value = Math.max(READER.FONT_SIZE_MIN, Math.min(READER.FONT_SIZE_MAX, val)) as any; saveSettings() }
+  function setLineHeight(val: number) { lineHeight.value = Math.max(READER.LINE_HEIGHT_MIN, Math.min(READER.LINE_HEIGHT_MAX, val)) as any; saveSettings() }
   function increaseFontSize() { setFontSize(fontSize.value + 1) }
   function decreaseFontSize() { setFontSize(fontSize.value - 1) }
   function increaseLineHeight() { setLineHeight(lineHeight.value + 0.2) }

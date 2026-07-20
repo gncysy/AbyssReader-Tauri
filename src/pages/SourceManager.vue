@@ -122,7 +122,7 @@ function showSourceDetail(idx: number) {
 
 async function testSource(idx: number) {
   testingIdx.value = idx
-  try { setTestResult(idx, await sourceApi.test(idx)) }
+  try { setTestResult(idx, await sourceApi.test(idx) as unknown as string) }
   catch (err: any) { setTestResult(idx, '失败: ' + err.message) }
   finally { testingIdx.value = -1 }
 }

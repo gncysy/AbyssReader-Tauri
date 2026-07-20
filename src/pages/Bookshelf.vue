@@ -40,8 +40,8 @@
         @click="openBook(idx)"
       >
         <div class="book-cover">
-          <img v-if="book.coverUrl && !book._coverFailed" :src="book.coverUrl" loading="lazy" @error="() => book._coverFailed = true" />
-          <div v-if="!book.coverUrl || book._coverFailed" class="cover-placeholder">
+          <img v-if="book.coverUrl && !(book as any)._coverFailed" :src="book.coverUrl" loading="lazy" @error="() => (book as any)._coverFailed = true" />
+          <div v-if="!book.coverUrl || (book as any)._coverFailed" class="cover-placeholder">
             <div class="cover-overlay">
               <div class="cover-title">{{ book.name || '未命名' }}</div>
               <div class="cover-author">{{ book.author || '佚名' }}</div>

@@ -1,5 +1,5 @@
 // ============================================
-// T9 - Cookie 管理
+// Cookie 管理
 // ============================================
 
 import { CookieJar, Cookie } from 'tough-cookie'
@@ -17,7 +17,7 @@ export class CookieManager {
 
   async getCookieString(url: string): Promise<string> {
     const cookies = await this.jar.getCookies(url)
-    return cookies.map(c => c.toString()).join('; ')
+    return cookies.map((c: Cookie) => c.toString()).join('; ')
   }
 
   async getCookies(url: string): Promise<Cookie[]> {
@@ -26,29 +26,12 @@ export class CookieManager {
 
   async getCookieValue(url: string, key: string): Promise<string> {
     const cookies = await this.jar.getCookies(url)
-    const found = cookies.find(c => c.key === key)
+    const found = cookies.find((c: Cookie) => c.key === key)
     return found?.value || ''
-  }
-
-  async removeCookie(key: string, url: string): Promise<void> {
-    const cookies = await this.jar.getCookies(url)
-    const filtered = cookies.filter(c => c.key !== key)
-    if (filtered.length === cookies.length) return
-    const serialized = await this.jar.serialize()
-    const newSerialized = { ...serialized, cookies: serialized.cookies.filter((c: any) => c.key !== key) }
-    this.jar = await CookieJar.deserialize(newSerialized) as CookieJar
   }
 
   clear(): void {
     this.jar = new CookieJar()
-  }
-
-  async export(): Promise<any> {
-    return this.jar.serialize()
-  }
-
-  async import(data: any): Promise<void> {
-    this.jar = await CookieJar.deserialize(data) as CookieJar
   }
 
   getJar(): CookieJar {

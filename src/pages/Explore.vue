@@ -104,7 +104,7 @@ async function loadCategories() {
   } catch (err: any) { console.error('[Explore] 加载分类失败:', err) }
 }
 
-async function onSourceChange(val: number) { selectedIndex.value = val; await loadCategories() }
+async function onSourceChange(val: string | number) { selectedIndex.value = val; await loadCategories() }
 
 async function exploreCategory(cat: { title: string; url: string }) {
   if (selectedIndex.value < 0) return

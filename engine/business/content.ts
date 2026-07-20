@@ -1,5 +1,5 @@
 // ============================================
-// 正文解析（对齐 Legado BookContent）
+// 正文解析
 // ============================================
 
 import { getGlobalHttpClient } from '../network/client.js'
@@ -40,14 +40,14 @@ export async function getContent(
   if (!rule || !rule.content) return '书源缺少正文规则'
 
   const httpClient = getGlobalHttpClient()
-  const headers = source.header ? JSON.parse(source.header) : {}
+  const headers: Record<string, string> = source.header ? JSON.parse((source.header || '{}').replace(/'/g, '"')) : {}
 
-  const urlAnalysis = analyzeUrl(chapterUrl, {
-    source, book: options.book, baseUrl: source.bookSourceUrl, headerMap: headers
+  const urlAnalysis = await analyzeUrl(chapterUrl, {
+    source, book: options.book, baseUrl: source.bookSourceUrl || '', headerMap: headers
   })
 
   if (urlAnalysis.method === 'POST' && urlAnalysis.body) {
-    let body = urlAnalysis.body
+    let body: any = urlAnalysis.body
     if (typeof body === 'string') {
       try {
         const bodyObj = JSON.parse(body)
@@ -65,7 +65,7 @@ export async function getContent(
       url: urlAnalysis.url,
       method: urlAnalysis.method,
       headers: urlAnalysis.headers,
-      body: urlAnalysis.body,
+      body: urlAnalysis.body as string | undefined,
       timeout: 30000,
     })
 
@@ -77,27 +77,16 @@ export async function getContent(
     if (!html || typeof html !== 'string') throw new Error('内容为空')
 
     const ctx = { source, baseUrl: source.bookSourceUrl, book: options.book || {}, result: html }
-
-    // 预解析 contentRule（对齐 Legado：getString(contentRule.content, unescape=false)）
     const contentRule = parseRule(rule.content || '')
-
-    // 用引擎提取正文
     let content = getString(html, contentRule as any, ctx)
-    if (!content || !content.trim()) {
-      content = stripHtml(html)
-    }
 
-    if (content.includes('<') && content.includes('>')) {
-      content = stripHtml(content)
-    }
+    if (!content || !content.trim()) { content = stripHtml(html) }
+    if (content.includes('<') && content.includes('>')) { content = stripHtml(content) }
 
-    // 全文替换（replaceRegex）
-    const replaceRegex = rule.replaceRegex
-    if (replaceRegex && content) {
+    if (rule.replaceRegex && content) {
       try {
-        const replaceRule = parseRule(replaceRegex)
+        const replaceRule = parseRule(rule.replaceRegex)
         content = getString(content, replaceRule as any, ctx) || content
-        // 加段落缩进
         content = content.split('\n').map(l => l.trim()).filter(l => l).join('\n')
       } catch {}
     }

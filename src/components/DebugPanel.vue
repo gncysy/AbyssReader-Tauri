@@ -117,7 +117,7 @@ const editJson = ref('')
 const sourceOptions = computed(() => {
   const opts = [{ label: '选择书源...', value: -1 }]
   for (let i = 0; i < (Array.isArray(props.sources) ? props.sources.length : 0); i++) {
-    opts.push({ label: props.sources[i].bookSourceName || props.sources[i].name, value: i })
+    opts.push({ label: (props.sources as any)[i].bookSourceName || (props.sources as any)[i].name, value: i })
   }
   return opts
 })
@@ -128,12 +128,12 @@ function addLog(msg: string, level = 'info') {
   nextTick(() => { if (logListRef.value) logListRef.value.scrollTop = 0 })
 }
 function clearAll() { searchResult.value = []; tocResult.value = []; contentResult.value = ''; logs.value = [] }
-function onSourceChange(val: number) { selectedIndex.value = val; emit('select-source', selectedIndex.value); clearAll() }
+function onSourceChange(val: string | number) { selectedIndex.value = val; emit('select-source', selectedIndex.value); clearAll() }
 function closePanel() { emit('update:visible', false) }
 
 function openEditor() {
   if (selectedIndex.value < 0) { message.warning('请先选择书源'); return }
-  editJson.value = JSON.stringify(props.sources[selectedIndex.value], null, 2)
+  editJson.value = JSON.stringify((props.sources as any)[selectedIndex.value], null, 2)
   showEditor.value = true
 }
 async function saveEdit() {
@@ -152,7 +152,7 @@ async function runSearch() {
   if (!searchKeyword.value.trim()) { message.warning('请输入关键词'); return }
   running.value = true; searchResult.value = []
   try {
-    const source = JSON.parse(JSON.stringify(props.sources[selectedIndex.value]))
+    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
     addLog(`开始搜索: "${searchKeyword.value}"，书源: ${source.bookSourceName || source.name}`, 'info')
 
     const res: any = await engine.search(source, searchKeyword.value, 1)
@@ -171,7 +171,7 @@ async function runToc() {
   if (!tocUrl.value.trim()) { message.warning('请输入书籍URL'); return }
   running.value = true; tocResult.value = []
   try {
-    const source = JSON.parse(JSON.stringify(props.sources[selectedIndex.value]))
+    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
     addLog(`获取目录: ${tocUrl.value}`, 'info')
 
     const res = await network.fetch(tocUrl.value, { method: 'GET', timeout: 30000 })
@@ -203,7 +203,7 @@ async function runContent() {
   if (!contentUrl.value.trim()) { message.warning('请输入章节URL'); return }
   running.value = true; contentResult.value = ''
   try {
-    const source = JSON.parse(JSON.stringify(props.sources[selectedIndex.value]))
+    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
     addLog(`获取正文: ${contentUrl.value}`, 'info')
 
     const res: any = await engine.getContent(source, contentUrl.value)

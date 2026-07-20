@@ -111,7 +111,7 @@ async function loadContent() {
   try {
     if (props.book?.bookUrl?.startsWith('local://')) {
       const bookId = props.book.bookUrl.replace('local://', '')
-      content.value = (await readerApi.getLocalChapterContent(bookId, currentChapter.value.id) as string) || ''
+      content.value = (await readerApi.getLocalChapterContent(bookId, (currentChapter.value?.id ?? 0) as unknown as string) || ''
       await nextTick(); if (contentRef.value) contentRef.value.scrollTop = 0; return
     }
     const allSources = (await store.get('bookSource')) || []
