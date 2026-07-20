@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2.11.0/",
-  "productName": "墨阅",
+  "productName": "AbyssReader",
   "version": "0.1.0",
   "identifier": "com.abyss.reader.tauri",
   "build": {
@@ -34,15 +34,10 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
-    "copyright": "Copyright © 2025 墨阅",
-    "category": "public.app-category.reference",
-    "shortDescription": "桌面端小说阅读器，兼容开源阅读书源",
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": [
-          "SimpChinese"
-        ]
+        "languages": ["SimpChinese"]
       }
     }
   }
