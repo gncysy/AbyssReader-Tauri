@@ -7,11 +7,9 @@
       <h2 class="reader-title">{{ currentChapter?.title || '加载中...' }}</h2>
       <div class="header-spacer"></div>
     </header>
-
     <div ref="contentRef" class="reader-content" @scroll="handleScroll">
       <div class="content-inner" :style="{ fontSize: fontSize + 'px', lineHeight: lineHeight }" v-html="sanitizedContent"></div>
     </div>
-
     <footer class="reader-footer">
       <span class="footer-left">{{ Math.round(scrollPercent * 100) }}%</span>
       <div class="footer-center">
@@ -25,7 +23,6 @@
       </div>
       <span class="footer-right"></span>
     </footer>
-
     <div v-if="loadingContent" class="reader-loading"><div class="loading-spinner"></div></div>
   </div>
 </template>
@@ -45,10 +42,9 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const message = useMessage()
 const readingStore = useReadingStore()
 
-const fontSize = computed({ get: () => readingStore.fontSize as number, set: (val: number) => readingStore.setFontSize(val) })
-const lineHeight = computed({ get: () => readingStore.lineHeight as number, set: (val: number) => readingStore.setLineHeight(val) })
-const currentTheme = computed({ get: () => readingStore.theme, set: (val: string) => readingStore.setTheme(val) })
-
+const fontSize = ref(18)
+const lineHeight = ref(1.8)
+const currentTheme = ref('dark')
 const chapters = ref<Chapter[]>([])
 const chapterIndex = ref(0)
 const content = ref('')
@@ -57,49 +53,36 @@ const contentRef = ref<HTMLElement | null>(null)
 const scrollPercent = ref(0)
 const themes = READER_THEMES
 const currentChapter = computed(() => chapters.value[chapterIndex.value] || null)
-
 const sanitizedContent = computed(() => {
   if (!content.value) return ''
-  return DOMPurify.sanitize(content.value, {
-    ALLOWED_TAGS: ['p','br','strong','b','em','i','u','s','span','div','h1','h2','h3','h4','h5','h6','img','a','blockquote','pre','code','ul','ol','li'],
-    ALLOWED_ATTR: ['href','src','alt','title'],
-  })
+  return DOMPurify.sanitize(content.value, { ALLOWED_TAGS: ['p','br','strong','b','em','i','u','s','span','div','h1','h2','h3','h4','h5','h6','img','a','blockquote','pre','code','ul','ol','li'], ALLOWED_ATTR: ['href','src','alt','title'] })
 })
 
-function increaseFontSize() { readingStore.increaseFontSize() }
-function decreaseFontSize() { readingStore.decreaseFontSize() }
-function setTheme(value: string) { readingStore.setTheme(value) }
+function increaseFontSize() { fontSize.value = Math.min(32, fontSize.value + 1) }
+function decreaseFontSize() { fontSize.value = Math.max(12, fontSize.value - 1) }
+function setTheme(value: string) { currentTheme.value = value }
 
 async function loadChapters() {
+  if (!props.book) return
   if (props.initialChapters && props.initialChapters.length > 0) {
     chapters.value = props.initialChapters
-    if ((props.book as any)?._forceChapterIndex !== undefined) {
-      chapterIndex.value = (props.book as any)._forceChapterIndex
-      await loadContent()
-      return
-    }
-    const progress = await readingStore.loadProgress(String(props.book?.bookUrl || ''), props.book?.name || '', props.book?.author || '')
+    if ((props.book as any)?._forceChapterIndex !== undefined) { chapterIndex.value = (props.book as any)._forceChapterIndex; await loadContent(); return }
+    const progress = await readingStore.loadProgress(String(props.book.bookUrl || ''), props.book.name || '', props.book.author || '')
     if (progress) { const idx = chapters.value.findIndex(ch => Number(ch.id) === Number(progress.chapterId)); if (idx !== -1) chapterIndex.value = idx }
-    await loadContent()
-    return
+    await loadContent(); return
   }
-  if (!props.book) return
   try {
     if (props.book.bookUrl?.startsWith('local://')) {
       const bookId = props.book.bookUrl.replace('local://', '')
       const data: any = await readerApi.getLocalBookChapters(bookId)
       chapters.value = data?.length ? data : [{ id: 0, title: '正文', url: props.book.bookUrl, index: 0 }]
-      const progress = await readingStore.loadProgress(String(props.book.bookUrl), props.book.name || '', props.book.author || '')
-      if (progress) { const idx = chapters.value.findIndex(ch => Number(ch.id) === Number(progress.chapterId)); if (idx !== -1) chapterIndex.value = idx }
       await loadContent(); return
     }
-    const allSources = (await store.get('bookSource')) || []
-    const source = props.source || (Array.isArray(allSources) ? allSources.find((s: any) => s.bookSourceName === props.book?.originName) : null)
+    const allSources: any[] = (await store.get('bookSource')) || []
+    const source = props.source || allSources.find((s: any) => s.bookSourceName === props.book?.originName)
     if (!source) { message.warning('书源未找到'); return }
     const result: any = await engine.getToc(source, props.book.tocUrl || props.book.bookUrl, { kind: props.book.kind })
     chapters.value = result?.success ? result.data : (Array.isArray(result) ? result : [])
-    const progress = await readingStore.loadProgress(String(props.book.bookUrl), props.book.name || '', props.book.author || '')
-    if (progress) { const idx = chapters.value.findIndex(ch => Number(ch.id) === Number(progress.chapterId)); if (idx !== -1) chapterIndex.value = idx }
     await loadContent()
   } catch (err: any) { message.error('加载目录失败: ' + err.message) }
 }
@@ -109,15 +92,15 @@ async function loadContent() {
   loadingContent.value = true
   try {
     if (props.book?.bookUrl?.startsWith('local://')) {
-      const bookId = props.book.bookUrl.replace('local://', '')
-      content.value = (await readerApi.getLocalChapterContent(bookId, currentChapter.value.id) as string) || ''
-      await nextTick(); if (contentRef.value) contentRef.value.scrollTop = 0; return
+      const bookId = props.book!.bookUrl.replace('local://', '')
+      content.value = String(await readerApi.getLocalChapterContent(bookId, currentChapter.value.id) || '')
+    } else {
+      const allSources: any[] = (await store.get('bookSource')) || []
+      const source = props.source || allSources.find((s: any) => s.bookSourceName === props.book?.originName)
+      if (!source) { content.value = '<p>书源未找到</p>'; return }
+      const result: any = await engine.getContent(source, currentChapter.value.url, props.book?.kind)
+      content.value = result?.success ? (result.data || '<p>内容为空</p>') : '<p>加载失败</p>'
     }
-    const allSources = (await store.get('bookSource')) || []
-    const source = props.source || (Array.isArray(allSources) ? allSources.find((s: any) => s.bookSourceName === props.book?.originName) : null)
-    if (!source) { content.value = '<p>书源未找到</p>'; return }
-    const result: any = await engine.getContent(source, currentChapter.value.url, props.book?.kind)
-    content.value = result?.success ? (result.data || '<p>内容为空</p>') : (typeof result === 'string' ? result : '<p>加载失败</p>')
     await nextTick(); if (contentRef.value) contentRef.value.scrollTop = 0
     await saveProgress()
   } catch { content.value = '<p>加载失败</p>' }
@@ -133,10 +116,7 @@ function handleScroll() {
 
 async function saveProgress() {
   if (!props.book || !currentChapter.value) return
-  await readingStore.saveProgress(
-    String(props.book.bookUrl), props.book.name || '', props.book.author || '',
-    currentChapter.value.id, Math.round(scrollPercent.value * 10000), currentChapter.value.title || ''
-  )
+  await readingStore.saveProgress(String(props.book.bookUrl), props.book.name || '', props.book.author || '', currentChapter.value.id, Math.round(scrollPercent.value * 10000), currentChapter.value.title || '')
 }
 
 async function prevChapter() { if (chapterIndex.value > 0) { await saveProgress(); chapterIndex.value--; await loadContent() } }

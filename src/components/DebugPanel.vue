@@ -18,7 +18,7 @@
 
       <div v-show="!minimize" class="debug-body">
         <div class="debug-toolbar">
-          <CustomDropdown v-model="selectedIndex" :options="sourceOptions" placeholder="选择书源..." @update:modelValue="onSourceChange" style="min-width:150px" />
+          <CustomDropdown v-model="selectedIndex" :options="sourceOptions" placeholder="选择书源..." @update:modelValue="(v: string | number) => onSourceChange(Number(v))" style="min-width:150px" />
           <div class="debug-tabs">
             <button v-for="tab in tabs" :key="tab.key" class="debug-tab" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">{{ tab.label }}</button>
           </div>
@@ -88,7 +88,7 @@ const logListRef = ref<HTMLElement | null>(null)
 const minimize = ref(false)
 const running = ref(false)
 
-const panelStyle = ref({ position: 'fixed' as const, top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '900px', height: '680px', zIndex: '9999' })
+const panelStyle = ref<Record<string, string>>({ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '900px', height: '680px', zIndex: '9999' })
 const dragState = { isDragging: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 }
 
 function startDrag(event: MouseEvent) {
@@ -115,9 +115,10 @@ const showEditor = ref(false)
 const editJson = ref('')
 
 const sourceOptions = computed(() => {
-  const opts = [{ label: '选择书源...', value: -1 }]
-  for (let i = 0; i < (Array.isArray(props.sources) ? props.sources.length : 0); i++) {
-    opts.push({ label: (props.sources as any)[i].bookSourceName || (props.sources as any)[i].name, value: i })
+  const opts: { label: string; value: number }[] = [{ label: '选择书源...', value: -1 }]
+  const arr = Array.isArray(props.sources) ? props.sources : []
+  for (let i = 0; i < arr.length; i++) {
+    opts.push({ label: arr[i].bookSourceName || arr[i].name || '未命名', value: i })
   }
   return opts
 })
@@ -128,20 +129,24 @@ function addLog(msg: string, level = 'info') {
   nextTick(() => { if (logListRef.value) logListRef.value.scrollTop = 0 })
 }
 function clearAll() { searchResult.value = []; tocResult.value = []; contentResult.value = ''; logs.value = [] }
-function onSourceChange(val: string | number) { selectedIndex.value = val; emit('select-source', selectedIndex.value); clearAll() }
+function onSourceChange(val: number) { selectedIndex.value = val; emit('select-source', val); clearAll() }
 function closePanel() { emit('update:visible', false) }
 
 function openEditor() {
   if (selectedIndex.value < 0) { message.warning('请先选择书源'); return }
-  editJson.value = JSON.stringify((props.sources as any)[selectedIndex.value], null, 2)
+  const arr = Array.isArray(props.sources) ? props.sources : []
+  editJson.value = JSON.stringify(arr[selectedIndex.value] || {}, null, 2)
   showEditor.value = true
 }
 async function saveEdit() {
   try {
-    const parsed = JSON.parse(editJson.value)
-    const sources = (await store.get('bookSource')) || []
-    sources[selectedIndex.value] = parsed
-    await store.set('bookSource', sources)
+    JSON.parse(editJson.value)
+    const sources: any[] = (await store.get('bookSource')) || []
+    const arr = Array.isArray(sources) ? sources : []
+    if (selectedIndex.value >= 0 && selectedIndex.value < arr.length) {
+      arr[selectedIndex.value] = JSON.parse(editJson.value)
+      await store.set('bookSource', arr)
+    }
     showEditor.value = false
     message.success('已保存')
   } catch (err: any) { message.error('JSON 格式错误: ' + err.message) }
@@ -152,16 +157,14 @@ async function runSearch() {
   if (!searchKeyword.value.trim()) { message.warning('请输入关键词'); return }
   running.value = true; searchResult.value = []
   try {
-    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
+    const arr = Array.isArray(props.sources) ? props.sources : []
+    const source = JSON.parse(JSON.stringify(arr[selectedIndex.value]))
     addLog(`开始搜索: "${searchKeyword.value}"，书源: ${source.bookSourceName || source.name}`, 'info')
-
     const res: any = await engine.search(source, searchKeyword.value, 1)
     if (res.success) {
       searchResult.value = res.data || []
       addLog(`搜索成功: ${searchResult.value.length} 本书`, 'success')
-    } else {
-      addLog(`搜索失败: ${res.error}`, 'error')
-    }
+    } else { addLog(`搜索失败: ${res.error}`, 'error') }
   } catch (err: any) { addLog(`异常: ${err.message}`, 'error') }
   finally { running.value = false }
 }
@@ -171,13 +174,12 @@ async function runToc() {
   if (!tocUrl.value.trim()) { message.warning('请输入书籍URL'); return }
   running.value = true; tocResult.value = []
   try {
-    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
+    const arr = Array.isArray(props.sources) ? props.sources : []
+    const source = JSON.parse(JSON.stringify(arr[selectedIndex.value]))
     addLog(`获取目录: ${tocUrl.value}`, 'info')
-
-    const res = await network.fetch(tocUrl.value, { method: 'GET', timeout: 30000 })
+    const res: any = await network.fetch(tocUrl.value, { method: 'GET', timeout: 30000 })
     const data = typeof res === 'string' ? res : JSON.stringify(res)
     addLog(`HTTP响应: ${data?.length || 0} 字节`, 'success')
-
     const rule = source.ruleToc
     if (rule?.chapterList) {
       addLog(`chapterList规则: ${rule.chapterList}`, 'info')
@@ -203,16 +205,14 @@ async function runContent() {
   if (!contentUrl.value.trim()) { message.warning('请输入章节URL'); return }
   running.value = true; contentResult.value = ''
   try {
-    const source = JSON.parse(JSON.stringify((props.sources as any)[selectedIndex.value]))
+    const arr = Array.isArray(props.sources) ? props.sources : []
+    const source = JSON.parse(JSON.stringify(arr[selectedIndex.value]))
     addLog(`获取正文: ${contentUrl.value}`, 'info')
-
     const res: any = await engine.getContent(source, contentUrl.value)
     if (res.success) {
       contentResult.value = res.data || ''
       addLog(`正文提取: ${contentResult.value.length} 字符`, 'success')
-    } else {
-      addLog(`获取失败: ${res.error}`, 'error')
-    }
+    } else { addLog(`获取失败: ${res.error}`, 'error') }
   } catch (err: any) { addLog(`异常: ${err.message}`, 'error') }
   finally { running.value = false }
 }
