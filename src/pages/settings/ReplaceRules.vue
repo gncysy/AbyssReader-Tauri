@@ -12,7 +12,7 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn-secondary" @click="triggerImport">导入 JSON</button>
-         name="field-8142"
+        <input ref="importInput" type="file" accept=".json" class="hidden" name="replace-rules-file" id="replace-rules-file" @change="onImportFile" />
         <button class="btn-secondary" @click="showImportUrlModal = true">从 URL</button>
         <button class="btn-secondary" @click="showPasteModal = true">粘贴 JSON</button>
         <button class="btn-primary" @click="openAddDialog">添加规则</button>
@@ -29,7 +29,10 @@
         <div class="rule-row"><span class="rule-label">匹配</span><code>{{ rule.pattern }}</code></div>
         <div class="rule-row"><span class="rule-label">替换</span><code>{{ rule.replacement || '(空)' }}</code></div>
         <div class="rule-actions">
-          <label class="toggle-switch"> name="field-6462"<span class="toggle-slider"></span></label>
+          <label class="toggle-switch">
+            <input type="checkbox" :checked="rule.isEnabled" @change="replaceRuleStore.toggleRule(rule.id)" name="replace-rule-enabled" :id="'replace-rule-enabled-' + rule.id" />
+            <span class="toggle-slider"></span>
+          </label>
           <button class="btn-secondary" @click="editRule(rule)">编辑</button>
           <button class="btn-danger" @click="deleteRule(rule)">删除</button>
         </div>
@@ -41,11 +44,17 @@
       <div class="dialog-form">
         <div class="form-group"><label>规则名称</label><n-input v-model:value="form.name" placeholder="如：去除广告" /></div>
         <div class="form-group"><label>作用范围</label>
-          <select v-model="form.scope" class="form-select"><option value="content">正文</option><option value="title">标题</option></select>
+          <select v-model="form.scope" class="form-select" name="replace-rule-scope" id="replace-rule-scope">
+            <option value="content">正文</option>
+            <option value="title">标题</option>
+          </select>
         </div>
         <div class="form-group"><label>匹配模式</label><n-input v-model:value="form.pattern" placeholder="正则或纯文本" /></div>
         <div class="form-group"><label>替换为</label><n-input v-model:value="form.replacement" placeholder="留空表示删除" /></div>
-        <label class="checkbox-label"> name="field-2242"<span>正则表达式</span></label>
+        <label class="checkbox-label">
+          <input type="checkbox" v-model="form.isRegex" name="replace-rule-is-regex" id="replace-rule-is-regex" />
+          <span>正则表达式</span>
+        </label>
       </div>
     </n-modal>
 

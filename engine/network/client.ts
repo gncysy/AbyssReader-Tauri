@@ -30,7 +30,32 @@ export class HttpClient {
     const startTime = Date.now()
 
     const headers = { ...this.defaultHeaders, ...(finalConfig.headers || {}) }
+    const sourceType = finalConfig.sourceType ?? 0
 
+    // ── 分支：WebView 模式 ──
+    if (finalConfig.useWebView) {
+      try {
+        const html = await network.fetchWebView(finalConfig.url, {
+          headers,
+          webJs: finalConfig.webJs || undefined,
+          timeout: finalConfig.timeout || this.defaultTimeout,
+          sourceType,
+        })
+
+        const response: ResponseData = {
+          status: 200,
+          data: typeof html === 'string' ? html : JSON.stringify(html),
+          headers: {},
+          url: finalConfig.url,
+          duration: Date.now() - startTime,
+        }
+        return await this.interceptor.interceptResponse(response)
+      } catch (error: any) {
+        return await this.interceptor.interceptError(error)
+      }
+    }
+
+    // ── 分支：标准 HTTP 模式 ──
     try {
       const result = await network.fetch(finalConfig.url, {
         method: finalConfig.method || 'GET',
@@ -40,6 +65,7 @@ export class HttpClient {
         ) : undefined,
         timeout: finalConfig.timeout || this.defaultTimeout,
         responseType: finalConfig.responseType || 'text',
+        sourceType,
       })
 
       const data = typeof result === 'string' ? result : JSON.stringify(result)

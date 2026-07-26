@@ -1,13 +1,16 @@
 // ============================================
-// XPath 规则解析
+// XPath 规则解析（对齐 Legado AnalyzeByXPath）
 // ============================================
 
 export function executeXPath(source: any, expression: string, attribute?: string): any {
   if (!source || !expression) return null
 
+  // 非 HTML/XML 内容或对象，XPath 无法解析，直接返回表达式（对齐 Legado）
+  if (typeof source !== 'string') return expression
+  if (!source.trim().startsWith('<')) return expression
+
   try {
-    const html = typeof source === 'string' ? source : String(source)
-    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const doc = new DOMParser().parseFromString(source, 'text/html')
 
     let xpathExpr = expression
     if (attribute) xpathExpr = expression + '/@' + attribute
@@ -40,3 +43,4 @@ export function executeXPath(source: any, expression: string, attribute?: string
     return null
   }
 }
+

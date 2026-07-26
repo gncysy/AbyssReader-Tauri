@@ -1,5 +1,6 @@
 pub mod models;
 pub mod db;
+pub mod cache;
 
 pub use db::{
     init_db, store_get, store_set, store_delete, store_get_all,

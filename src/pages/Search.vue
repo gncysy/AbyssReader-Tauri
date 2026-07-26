@@ -7,9 +7,7 @@
 
     <div class="search-bar">
       <input ref="searchInput" v-model="keyword" type="text" placeholder="输入书名或作者..." class="search-input" name="main-search" id="main-search" autocomplete="off" @keydown.enter="doSearch" />
-      <button class="btn-primary" :disabled="loading || !keyword.trim()" @click="doSearch">
-        {{ loading ? '搜索中...' : '搜索' }}
-      </button>
+      <button class="btn-primary" :disabled="loading || !keyword.trim()" @click="doSearch">{{ loading ? '搜索中...' : '搜索' }}</button>
       <button class="btn-secondary" @click="clearResults">清空</button>
     </div>
 
@@ -29,9 +27,7 @@
           <div v-for="book in searchResults[key]" :key="book.bookUrl" class="book-card" @click="openBookDetail(book, key)">
             <div class="book-cover">
               <img v-if="book.coverUrl" :src="book.coverUrl" loading="lazy" @error="handleImageError" />
-              <div v-else class="cover-placeholder">
-                <div class="cover-overlay"><div class="cover-title">{{ book.name || '未命名' }}</div><div class="cover-author">{{ book.author || '佚名' }}</div></div>
-              </div>
+              <div v-else class="cover-placeholder"><div class="cover-overlay"><div class="cover-title">{{ book.name || '未命名' }}</div><div class="cover-author">{{ book.author || '佚名' }}</div></div></div>
             </div>
             <div class="book-info"><h4>{{ book.name || '未命名' }}</h4><p>{{ book.author || '佚名' }}</p></div>
           </div>
@@ -39,22 +35,15 @@
       </div>
     </div>
 
-    <div v-else-if="searched && !loading" class="empty-state">
-      <h3>未找到相关书籍</h3>
-      <p>试试其他关键词</p>
-    </div>
-
-    <div v-else class="empty-state" style="padding:88px 0">
-      <h3>输入关键词开始搜索</h3>
-      <p>支持书名、作者搜索，多书源并发</p>
-    </div>
+    <div v-else-if="searched && !loading" class="empty-state"><h3>未找到相关书籍</h3><p>试试其他关键词</p></div>
+    <div v-else class="empty-state" style="padding:88px 0"><h3>输入关键词开始搜索</h3><p>支持书名、作者搜索，多书源并发</p></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
-import { store, engine } from '@/api'
+import { store } from '@/api'
 import { useBookshelfStore } from '@/store'
 import type { Book, BookSource } from '@shared/types'
 
@@ -75,29 +64,15 @@ let globalAbort = new AbortController()
 const resultKeys = computed(() => Object.keys(searchResults.value).filter(k => searchResults.value[k]?.length > 0))
 
 async function loadSources() {
-  try {
-    const raw = await store.get('bookSource')
-    sources.value = Array.isArray(raw) ? raw : []
-  } catch {}
+  try { sources.value = (await store.get('bookSource')) || [] } catch { sources.value = [] }
 }
 
-function clearResults() {
-  searchResults.value = {}
-  searched.value = false
-  completedCount.value = 0
-  totalSources.value = 0
-}
-
-function cancelSearch() {
-  globalAbort.abort()
-  globalAbort = new AbortController()
-  loading.value = false
-}
+function clearResults() { searchResults.value = {}; searched.value = false; completedCount.value = 0; totalSources.value = 0 }
+function cancelSearch() { globalAbort.abort(); globalAbort = new AbortController(); loading.value = false }
 
 async function doSearch() {
   const kw = keyword.value.trim()
   if (!kw) { message.warning('请输入关键词'); searchInput.value?.focus(); return }
-
   const arr = Array.isArray(sources.value) ? sources.value : []
   const enabled = arr.filter(s => s.enabled !== false)
   if (!enabled.length) { message.warning('没有已启用的书源'); return }
@@ -105,11 +80,8 @@ async function doSearch() {
   cancelSearch()
   globalAbort = new AbortController()
   const signal = globalAbort.signal
-
-  loading.value = true
-  searched.value = true
-  completedCount.value = 0
-  totalSources.value = enabled.length
+  loading.value = true; searched.value = true
+  completedCount.value = 0; totalSources.value = enabled.length
   searchResults.value = {}
 
   const queue = [...enabled]
@@ -119,33 +91,14 @@ async function doSearch() {
     while (queue.length > 0 && !signal.aborted) {
       const source = queue.shift()
       if (!source) break
-
       try {
         if (signal.aborted) return
-        // 调用 Rust engine_search（内部已支持 header + @js: 的 URL）
-        const result: any = await engine.search(source, kw, 1)
+        const { search: engineSearch } = await import('../../engine/business/search.js')
+        const books = await engineSearch(source, kw, { page: 1 })
         if (signal.aborted) return
-
-        if (result?.success && result?.data?.html) {
-          const html = result.data.html
-          let books: Book[] = []
-          try {
-            const json = JSON.parse(html)
-            if (json.data && Array.isArray(json.data)) {
-              books = json.data.map((item: any) => ({
-                name: item.novelName || item.name || item.title || '',
-                author: item.authorName || item.author || '',
-                bookUrl: item.novelId ? `${(source.bookSourceUrl || '').replace(/##.*$/, '')}/novel/${item.novelId}` : (item.bookUrl || item.url || ''),
-                coverUrl: item.cover || item.coverUrl || '',
-                intro: item.summary || item.intro || '',
-              } as Book))
-            }
-          } catch {}
-
-          if (books.length > 0) {
-            const key = source.bookSourceName || source.name || source.bookSourceUrl
-            searchResults.value = { ...searchResults.value, [key]: books }
-          }
+        if (books && books.length > 0) {
+          const key = source.bookSourceName || source.name || source.bookSourceUrl
+          searchResults.value = { ...searchResults.value, [key]: books }
         }
       } catch (err: any) {
         if (err?.name === 'AbortError' || signal.aborted) return
@@ -154,10 +107,7 @@ async function doSearch() {
     }
   }
 
-  for (let i = 0; i < Math.min(CONCURRENCY, enabled.length); i++) {
-    workers.push(worker())
-  }
-
+  for (let i = 0; i < Math.min(CONCURRENCY, enabled.length); i++) { workers.push(worker()) }
   await Promise.all(workers).catch(() => {})
   if (!signal.aborted) {
     loading.value = false
@@ -170,14 +120,12 @@ async function doSearch() {
 function openBookDetail(book: Book, sourceName: string) {
   const arr = Array.isArray(sources.value) ? sources.value : []
   const source = arr.find(s => (s.bookSourceName || s.name) === sourceName)
-  bookshelfStore.openDetail(book, source || null)
+  bookshelfStore.openDetail({ ...book, origin: source?.bookSourceUrl || '', originName: source?.bookSourceName || source?.name || '' }, source || null)
 }
 
 function handleImageError(event: Event) {
-  const img = event.target as HTMLImageElement
-  const parent = img.parentElement
-  if (!parent) return
-  img.remove()
+  const img = event.target as HTMLImageElement; const parent = img.parentElement
+  if (!parent) return; img.remove()
   if (!parent.querySelector('.cover-placeholder')) {
     const div = document.createElement('div'); div.className = 'cover-placeholder'
     const title = parent.closest('.book-card')?.querySelector('h4')?.textContent || '未命名'

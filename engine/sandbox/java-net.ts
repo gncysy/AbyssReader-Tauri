@@ -1,5 +1,5 @@
 // ============================================
-// 沙箱网络 API（Tauri 版：标记为不可用，走 Rust deno_core）
+// 沙箱网络 API
 // ============================================
 
 export function createNetApi(options: {
@@ -8,14 +8,41 @@ export function createNetApi(options: {
   const cookie = options.cookie || { getCookie: () => '', getKey: () => '' }
 
   return {
-    ajax: (_url: any): string => {
-      throw new Error('java.ajax 必须通过 deno_core 执行，请使用 invoke("execute_js_rule")')
+    ajax: async (url: any): Promise<string> => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const urlStr = Array.isArray(url) ? String(url[0]) : String(url)
+        const result: any = await invoke('execute_js_rule', {
+          request: {
+            code: `java.ajax('${urlStr.replace(/'/g, "\\'")}')`,
+            context: {},
+            timeoutMs: 30000
+          }
+        })
+        return result?.success ? result.result : 'error: ' + (result?.error || 'unknown')
+      } catch (e: any) { return 'error: ' + (e?.message || String(e)) }
     },
-    ajaxAll: (_urlList: string[]): string[] => {
-      throw new Error('java.ajaxAll 必须通过 deno_core 执行')
+    ajaxAll: async (urlList: string[]): Promise<string[]> => {
+      const results: string[] = []
+      for (const url of urlList) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core')
+          const result: any = await invoke('execute_js_rule', {
+            request: { code: `java.ajax('${url.replace(/'/g, "\\'")}')`, context: {}, timeoutMs: 30000 }
+          })
+          results.push(result?.success ? result.result : '')
+        } catch { results.push('') }
+      }
+      return results
     },
-    connect: (_urlStr: string): any => {
-      throw new Error('java.connect 必须通过 deno_core 执行')
+    connect: async (urlStr: string): Promise<any> => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const result: any = await invoke('execute_js_rule', {
+          request: { code: `java.ajax('${urlStr.replace(/'/g, "\\'")}')`, context: {}, timeoutMs: 30000 }
+        })
+        return result?.success ? result.result : ''
+      } catch { return '' }
     },
     getCookie: (tag: string, key?: string): string => {
       if (key) return cookie.getKey(tag, key)

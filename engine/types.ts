@@ -19,7 +19,7 @@ export interface ParseContext {
 }
 
 // ─── 规则模式 ───
-export type RuleMode = 'css' | 'json' | 'xpath' | 'js' | 'regex'
+export type RuleMode = 'css' | 'json' | 'xpath' | 'js' | 'regex' | 'webjs'
 
 // ─── 单个规则 ───
 export interface SourceRule {
@@ -29,6 +29,8 @@ export interface SourceRule {
   replacement?: string
   replaceFirst?: boolean
   putMap?: Record<string, string>
+  // 内部标记：&& / || / %% 组合类型（对齐 Legado elementsType）
+  _combineType?: '&&' | '||' | '%%'
 }
 
 // ─── URL 解析结果 ───
@@ -56,6 +58,9 @@ export interface RequestConfig {
   followRedirect?: boolean
   responseType?: 'text' | 'arraybuffer' | 'json'
   charset?: string
+  useWebView?: boolean
+  webJs?: string | null
+  sourceType?: number
 }
 
 // ─── 网络响应 ───

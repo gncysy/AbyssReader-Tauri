@@ -6,28 +6,40 @@
     </header>
 
     <div class="setting-item">
-      <div class="setting-label"><span class="label-text">服务器地址</span><span class="label-desc">支持坚果云、Nextcloud 等</span></div>
-       name="field-1347"
+      <div class="setting-label">
+        <span class="label-text">服务器地址</span>
+        <span class="label-desc">支持坚果云、Nextcloud 等</span>
+      </div>
+      <input v-model="config.server" type="text" class="input-search" style="width:260px" placeholder="https://dav.jianguoyun.com/dav/" name="webdav-server" id="webdav-server" autocomplete="off" />
     </div>
     <div class="setting-item">
       <div class="setting-label"><span class="label-text">账号</span></div>
-       name="field-7057"
+      <input v-model="config.username" type="text" class="input-search" style="width:260px" name="webdav-username" id="webdav-username" autocomplete="off" />
     </div>
     <div class="setting-item">
-      <div class="setting-label"><span class="label-text">密码</span><span class="label-desc">应用专用密码，加密存储</span></div>
-       name="field-2194"
+      <div class="setting-label">
+        <span class="label-text">密码</span>
+        <span class="label-desc">应用专用密码，加密存储</span>
+      </div>
+      <input v-model="config.password" type="password" class="input-search" style="width:260px" name="webdav-password" id="webdav-password" autocomplete="new-password" />
     </div>
     <div class="setting-item">
-      <div class="setting-label"><span class="label-text">子文件夹</span><span class="label-desc">默认 legado</span></div>
-       name="field-7277"
+      <div class="setting-label">
+        <span class="label-text">子文件夹</span>
+        <span class="label-desc">默认 legado</span>
+      </div>
+      <input v-model="config.folder" type="text" class="input-search" style="width:260px" placeholder="legado" name="webdav-folder" id="webdav-folder" autocomplete="off" />
     </div>
     <div class="setting-item">
       <div class="setting-label"><span class="label-text">设备名称</span></div>
-       name="field-6350"
+      <input v-model="config.deviceName" type="text" class="input-search" style="width:260px" placeholder="desktop" name="webdav-device" id="webdav-device" autocomplete="off" />
     </div>
     <div class="setting-item">
       <div class="setting-label"><span class="label-text">启用同步</span></div>
-      <label class="toggle-switch"> name="field-7719"<span class="toggle-slider"></span></label>
+      <label class="toggle-switch">
+        <input v-model="config.enabled" type="checkbox" name="webdav-enabled" id="webdav-enabled" />
+        <span class="toggle-slider"></span>
+      </label>
     </div>
 
     <div class="webdav-actions">
@@ -85,26 +97,33 @@ async function testConnection() {
 
 async function loadBackupList() {
   try {
-    backupList.value = await listBackups(config.value)
+    const result = await listBackups(config.value)
+    console.log('[WebDAV Vue] listBackups 原始返回:', result)
+    console.log('[WebDAV Vue] 返回类型:', typeof result)
+    console.log('[WebDAV Vue] 是否数组:', Array.isArray(result))
+    console.log('[WebDAV Vue] 长度:', result?.length)
+    if (result && Array.isArray(result)) {
+      backupList.value = result
+      console.log('[WebDAV Vue] backupList 已赋值，长度:', backupList.value.length)
+    } else {
+      backupList.value = []
+      console.warn('[WebDAV Vue] listBackups 返回的不是数组')
+    }
     if (backupList.value.length === 0) message.info('没有找到备份文件')
     else message.success(`找到 ${backupList.value.length} 个备份`)
-  } catch (err: any) { message.error('加载备份列表失败: ' + err.message) }
+  } catch (err: any) {
+    console.error('[WebDAV Vue] loadBackupList 异常:', err)
+    message.error('加载备份列表失败: ' + err.message)
+  }
 }
 
 async function uploadBackup() {
   syncing.value = true; status.value = null
   try {
     const allKeys: any = await store.getAll()
-    const localData: any = {
-      bookshelf: allKeys.bookshelf,
-      bookSource: allKeys.bookSource,
-      readRecord: allKeys.readRecord,
-      replaceRules: allKeys.replaceRules,
-      readConfig: allKeys.readConfig,
-      themeConfig: allKeys.themeConfig,
-    }
-    for (const key of Object.keys(allKeys)) {
-      if (key.startsWith('bookProgress_') || key.startsWith('reader-scroll-')) localData[key] = allKeys[key]
+    const localData: any = {}
+    for (const key of Object.keys(allKeys || {})) {
+      localData[key] = allKeys[key]
     }
     const result = await fullSync(config.value, localData)
     status.value = { type: result.success ? 'success' : 'error', message: result.message }
@@ -167,3 +186,4 @@ onMounted(() => { loadConfig() })
 .backup-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backup-date { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
 </style>
+

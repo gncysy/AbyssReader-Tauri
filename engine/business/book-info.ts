@@ -16,6 +16,27 @@ function cleanIntro(intro: string, maxLength: number = 500): string {
     .substring(0, maxLength)
 }
 
+async function parseHeader(source: BookSource): Promise<Record<string, string>> {
+  const result: Record<string, string> = {}
+  try {
+    if (source.header) {
+      if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) {
+        const { executeJs } = await import('../core/rule-parser/js.js')
+        const ctx = { source, baseUrl: source.bookSourceUrl || '', result: '', book: {} }
+        const headerResult = await executeJs('', source.header, ctx)
+        try { Object.assign(result, JSON.parse(headerResult)) } catch {
+          try { Object.assign(result, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {}
+        }
+      } else {
+        try { Object.assign(result, JSON.parse(source.header)) } catch {
+          try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {}
+        }
+      }
+    }
+  } catch {}
+  return result
+}
+
 export async function getBookInfo(
   source: BookSource,
   bookUrl: string,
@@ -33,8 +54,14 @@ export async function getBookInfo(
 
   if (!html) {
     try {
-      const headers = source.header ? JSON.parse(source.header) : {}
-      const response = await httpClient.request({ url: bookUrl, method: 'GET', headers, timeout: 30000 })
+      const headers = await parseHeader(source)
+      const response = await httpClient.request({
+        url: bookUrl,
+        method: 'GET',
+        headers,
+        timeout: 30000,
+        sourceType: source.bookSourceType ?? 0,  // ← 直接传书源类型
+      })
       if (response.status < 200 || response.status >= 300) return null
       html = response.data as string
       if (response.url && response.url !== bookUrl) finalRedirectUrl = response.url
@@ -47,7 +74,7 @@ export async function getBookInfo(
 
   if (rule.init) {
     try {
-      const initResult = getString(html, rule.init, ctx)
+      const initResult = await getString(html, rule.init, ctx)
       if (initResult && typeof initResult === 'string') {
         html = initResult
         ctx.result = initResult
@@ -55,13 +82,13 @@ export async function getBookInfo(
     } catch {}
   }
 
-  const name = getString(html, rule.name || '', ctx) || '未命名'
-  const author = getString(html, rule.author || '', ctx) || '未知作者'
-  const kind = getString(html, rule.kind || '', ctx) || ''
-  const lastChapter = getString(html, rule.lastChapter || '', ctx) || ''
-  const intro = cleanIntro(getString(html, rule.intro || '', ctx) || '')
-  const coverUrl = getString(html, rule.coverUrl || '', ctx) || ''
-  const tocUrl = getString(html, rule.tocUrl || '', ctx) || bookUrl
+  const name = await getString(html, rule.name || '', ctx) || '未命名'
+  const author = await getString(html, rule.author || '', ctx) || '未知作者'
+  const kind = await getString(html, rule.kind || '', ctx) || ''
+  const lastChapter = await getString(html, rule.lastChapter || '', ctx) || ''
+  const intro = cleanIntro(await getString(html, rule.intro || '', ctx) || '')
+  const coverUrl = await getString(html, rule.coverUrl || '', ctx) || ''
+  const tocUrl = await getString(html, rule.tocUrl || '', ctx) || bookUrl
 
   return {
     name: String(name).trim(),

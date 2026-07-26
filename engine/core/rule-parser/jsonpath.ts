@@ -9,13 +9,17 @@ export function executeJsonPath(source: any, expression: string): any {
 
   let data = source
   if (typeof source === 'string') {
+    // 如果是 URL 或纯文本，不解析为 JSONPath
+    if (/^https?:\/\//.test(source.trim()) || /^[\s\S]*<[a-zA-Z]/.test(source)) {
+      return null
+    }
     try { data = JSON.parse(source) } catch { return null }
   }
 
   if (typeof data !== 'object' || data === null) return null
 
   try {
-    let expr = expression.trim()
+    let expr = expression.trim().replace(/\.\[/g, '[')
 
     if (expr.toLowerCase().startsWith('@json:')) {
       expr = expr.substring(6).trim()

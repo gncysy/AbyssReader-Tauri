@@ -42,6 +42,8 @@ export interface Chapter {
   isPay?: boolean
   content?: string | null
   updateTime?: string
+  _deferredJs?: string
+  _deferredResult?: any
 }
 
 export interface ReadingProgress {

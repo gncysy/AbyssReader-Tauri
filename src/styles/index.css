@@ -25,6 +25,9 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --duration-fast: 180ms;
   --duration-normal: 280ms;
+
+  /* 统一控件高度 */
+  --control-height: 38px;
 }
 
 /* ─── 深色模式 ─── */
@@ -91,48 +94,100 @@ body {
 
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
+/* ─── 全局禁用自动填充弹窗 ─── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px var(--bg-card) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  caret-color: var(--text-primary) !important;
+  transition: background-color 50000s ease-in-out 0s;
+}
+
+/* ─── 全局强制 cursor ─── */
+button, [role="button"], .btn-back, .btn-back * {
+  cursor: pointer !important;
+}
+button:disabled { cursor: not-allowed !important; }
+a { cursor: pointer !important; }
+
 /* ─── 按钮 ─── */
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 8px 18px; font-size: 14px; font-weight: var(--font-medium);
+  padding: 0 18px; font-size: 14px; font-weight: var(--font-medium);
   color: #0f0f0f; background: var(--brand); border: none;
-  border-radius: var(--radius-md); cursor: pointer; min-height: 36px;
+  border-radius: var(--radius-md); cursor: pointer;
+  height: var(--control-height); min-height: var(--control-height);
   transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(212,160,23,0.3); }
 .btn-primary:active { transform: translateY(0); background: var(--brand-pressed); }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed !important; transform: none; box-shadow: none; }
 
 .btn-secondary {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 8px 18px; font-size: 14px; font-weight: var(--font-medium);
+  padding: 0 18px; font-size: 14px; font-weight: var(--font-medium);
   color: var(--text-secondary); background: transparent; border: 1px solid var(--border-color);
-  border-radius: var(--radius-md); cursor: pointer; min-height: 36px;
+  border-radius: var(--radius-md); cursor: pointer;
+  height: var(--control-height); min-height: var(--control-height);
   transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .btn-secondary:hover { color: var(--text-primary); background: var(--bg-hover); border-color: var(--brand); transform: translateY(-1px); }
-.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed !important; transform: none; }
 
 .btn-danger {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 8px 18px; font-size: 14px; font-weight: var(--font-medium);
+  padding: 0 18px; font-size: 14px; font-weight: var(--font-medium);
   color: #c0392b; background: rgba(192,57,43,0.08); border: 1px solid rgba(192,57,43,0.2);
-  border-radius: var(--radius-md); cursor: pointer; min-height: 36px;
+  border-radius: var(--radius-md); cursor: pointer;
+  height: var(--control-height); min-height: var(--control-height);
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .btn-danger:hover { background: #c0392b; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(192,57,43,0.25); }
-.btn-danger:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.btn-danger:disabled { opacity: 0.4; cursor: not-allowed !important; transform: none; }
 
 /* ─── 输入框 ─── */
 .input-search, .search-input {
-  padding: 8px 14px; font-size: 14px; color: var(--text-primary);
+  padding: 0 14px; font-size: 14px; color: var(--text-primary);
   background: var(--bg-card); border: 1px solid var(--border-color);
   border-radius: var(--radius-md); outline: none;
+  height: var(--control-height); min-height: var(--control-height);
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
   font-family: var(--font-family);
 }
 .input-search:focus, .search-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 .input-search::placeholder, .search-input::placeholder { color: var(--text-muted); opacity: 0.7; }
+
+/* ─── 自定义下拉组件 ─── */
+.custom-dropdown { position: relative; display: inline-block; min-width: 120px; user-select: none; }
+.custom-dropdown-trigger {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  cursor: pointer !important; font-size: 14px; gap: 8px;
+  height: var(--control-height); min-height: var(--control-height);
+  box-sizing: border-box;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.custom-dropdown-trigger:hover { border-color: var(--brand); }
+.custom-dropdown-trigger:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.custom-dropdown-arrow { font-size: 10px; color: var(--text-muted); transition: transform 0.2s; }
+.custom-dropdown.open .custom-dropdown-arrow { transform: rotate(180deg); }
+.custom-dropdown-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  background: var(--bg-card); border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+  max-height: 240px; overflow-y: auto; padding: 4px 0;
+}
+.custom-dropdown-item {
+  padding: 8px 14px; cursor: pointer !important; font-size: 14px;
+  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
+}
+.custom-dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.custom-dropdown-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
 
 /* ─── 页面标题 ─── */
 .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
@@ -183,65 +238,39 @@ body {
   appearance: none; -webkit-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center;
-  padding: 8px 36px 8px 14px;
+  padding: 0 36px 0 14px;
   color: var(--text-primary); background-color: var(--bg-card);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  font-size: 14px; font-family: var(--font-family); cursor: pointer; outline: none;
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  font-size: 14px; font-family: var(--font-family); cursor: pointer !important; outline: none;
+  height: var(--control-height); min-height: var(--control-height);
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-  min-height: 36px;
 }
 .form-select:hover { border-color: var(--brand); }
 .form-select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
-.form-select option {
-  background: var(--bg-card); color: var(--text-primary); padding: 10px 14px; font-size: 14px;
-}
+.form-select option { background: var(--bg-card); color: var(--text-primary); padding: 10px 14px; font-size: 14px; }
 
 select:not(.form-select) {
   appearance: none; -webkit-appearance: none;
   background: var(--bg-card);
   background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center;
-  padding: 9px 36px 9px 14px;
+  padding: 0 36px 0 14px;
   color: var(--text-primary); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); font-size: 14px; font-family: var(--font-family);
-  cursor: pointer; outline: none; min-height: 36px; min-width: 60px;
+  border-radius: var(--radius-md); font-size: 14px; font-family: var(--font-family);
+  cursor: pointer !important; outline: none;
+  height: var(--control-height); min-height: var(--control-height);
+  min-width: 60px; box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 select:not(.form-select):hover { border-color: var(--brand); }
 select:not(.form-select):focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 select:not(.form-select) option { background: var(--bg-card); color: var(--text-primary); }
 
-/* ─── 自定义下拉组件 ─── */
-.custom-dropdown { position: relative; display: inline-block; min-width: 120px; user-select: none; }
-.custom-dropdown-trigger {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 14px; min-height: 36px;
-  background: var(--bg-card); color: var(--text-primary);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 14px; gap: 8px;
-  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-}
-.custom-dropdown-trigger:hover { border-color: var(--brand); }
-.custom-dropdown-trigger:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.custom-dropdown-arrow { font-size: 10px; color: var(--text-muted); transition: transform 0.2s; }
-.custom-dropdown.open .custom-dropdown-arrow { transform: rotate(180deg); }
-.custom-dropdown-menu {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
-  background: var(--bg-card); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
-  max-height: 240px; overflow-y: auto; padding: 4px 0;
-}
-.custom-dropdown-item {
-  padding: 8px 14px; cursor: pointer; font-size: 14px;
-  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
-}
-.custom-dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
-.custom-dropdown-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
-
 /* ─── 切换开关 ─── */
 .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
+.toggle-slider { position: absolute; cursor: pointer !important; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
 .toggle-slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
 .toggle-switch input:checked + .toggle-slider { background: var(--brand); }
 .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
@@ -249,6 +278,138 @@ select:not(.form-select) option { background: var(--bg-card); color: var(--text-
 /* ─── 通用标签 ─── */
 .badge { font-size: 11px; padding: 2px 10px; border-radius: 9999px; font-weight: 500; }
 .badge-vip { background: rgba(255,193,7,0.12); color: #ffc107; }
+
+/* ─── Naive UI 全局主题覆盖 ─── */
+.n-modal .n-card,
+.n-modal-container .n-card {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+.n-modal .n-card__title,
+.n-dialog .n-card__title,
+.n-modal-container .n-card__title {
+  color: var(--text-primary) !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+}
+.n-modal .n-card__content,
+.n-dialog .n-card__content {
+  color: var(--text-secondary) !important;
+}
+.n-dialog, .n-modal-container {
+  background: var(--bg-card) !important;
+  border-radius: var(--radius-lg) !important;
+}
+.n-message {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-md) !important;
+  border-radius: var(--radius-md) !important;
+}
+.n-message .n-message__content { color: var(--text-primary) !important; }
+.n-message.n-message--success { border-left: 3px solid #4caf50 !important; }
+.n-message.n-message--error { border-left: 3px solid #e74c3c !important; }
+.n-message.n-message--warning { border-left: 3px solid #f39c12 !important; }
+.n-message.n-message--info { border-left: 3px solid var(--brand) !important; }
+.n-notification {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.n-notification .n-notification-main__title { color: var(--text-primary) !important; }
+.n-notification .n-notification-main__description { color: var(--text-secondary) !important; }
+.n-input {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+.n-input .n-input__input-el {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+}
+.n-button--primary-type { background: var(--brand) !important; border-color: var(--brand) !important; }
+.n-button--default-type { border-color: var(--border-color) !important; color: var(--text-secondary) !important; }
+
+/* ─── Naive UI Textarea 适配 ─── */
+.n-input.n-input--textarea {
+  background: var(--bg) !important;
+  border-color: var(--border-color) !important;
+}
+.n-input.n-input--textarea .n-input__textarea-el {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  caret-color: var(--text-primary) !important;
+}
+.n-input.n-input--textarea .n-input__placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* ─── Naive UI Dialog 弹窗内容颜色 ─── */
+.n-dialog .n-card__content {
+  color: var(--text-primary) !important;
+}
+.n-dialog .n-card__title {
+  color: var(--text-primary) !important;
+}
+.n-dialog .n-card__action .n-button--default-type {
+  color: var(--text-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* ─── Naive UI Dialog 强制覆盖 ─── */
+body .n-dialog .n-card__title,
+body .n-modal .n-card__title,
+body .n-dialog .n-card-header__main,
+body .n-modal .n-card-header__main {
+  color: var(--text-primary) !important;
+}
+body .n-dialog .n-card__content,
+body .n-modal .n-card__content {
+  color: var(--text-primary) !important;
+  background: var(--bg-card) !important;
+}
+body .n-dialog .n-card,
+body .n-modal .n-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+body .n-dialog .n-button--default-type {
+  color: var(--text-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+body .n-dialog .n-button--primary-type {
+  background: var(--brand) !important;
+  border-color: var(--brand) !important;
+}
+body .n-dialog .n-button--warning-type {
+  background: #c0392b !important;
+  border-color: #c0392b !important;
+  color: #fff !important;
+}
+
+/* ─── Naive UI Dialog 终极覆盖 ─── */
+.n-card__title, .n-card-header__main, .n-card__content, .n-dialog .n-card__content, .n-dialog .n-card__title {
+  color: var(--text-primary) !important;
+}
+.n-card, .n-dialog, .n-dialog .n-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+.n-button.n-button--default-type {
+  color: var(--text-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+.n-button.n-button--warning-type {
+  background: #c0392b !important;
+  border-color: #c0392b !important;
+  color: #fff !important;
+}
+.n-button.n-button--primary-type {
+  background: var(--brand) !important;
+  border-color: var(--brand) !important;
+  color: #0f0f0f !important;
+}
 
 /* ─── 工具类 ─── */
 .hidden { display: none; }

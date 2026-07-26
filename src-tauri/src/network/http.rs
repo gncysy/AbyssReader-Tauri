@@ -3,6 +3,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+use reqwest::Method;
 
 static CLIENT_CACHE: LazyLock<Mutex<HashMap<String, Client>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -30,7 +31,6 @@ pub async fn execute_http_request(
     charset: Option<String>,
     timeout_secs: u64,
 ) -> Result<String> {
-    // 安全校验
     let parsed = url::Url::parse(url).map_err(|e| AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
     if let Some(host) = parsed.host_str() {
         if is_blocked_host(host) {
@@ -44,7 +44,7 @@ pub async fn execute_http_request(
         c.clone()
     } else {
         let c = Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .user_agent(crate::js_runtime::ops::get_ua())
             .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
@@ -54,11 +54,18 @@ pub async fn execute_http_request(
     };
     drop(cache);
 
-    let mut req = match method.to_uppercase().as_str() {
-        "POST" => client.post(url),
-        "PUT" => client.put(url),
-        "DELETE" => client.delete(url),
-        _ => client.get(url),
+    let method_upper = method.to_uppercase();
+    let method_str = method_upper.as_str();
+
+    let mut req = if method_str == "PROPFIND" {
+        client.request(Method::from_bytes(b"PROPFIND").unwrap(), url)
+    } else {
+        match method_str {
+            "POST" => client.post(url),
+            "PUT" => client.put(url),
+            "DELETE" => client.delete(url),
+            _ => client.get(url),
+        }
     };
 
     req = req
@@ -96,3 +103,4 @@ pub async fn execute_http_request(
 
     Ok(content)
 }
+

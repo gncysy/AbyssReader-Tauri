@@ -54,65 +54,110 @@ export const network = {
     body?: string
     timeout?: number
     responseType?: string
+    sourceType?: number
   }) => invoke('fetch_url', {
     url,
     method: options?.method || 'GET',
     body: options?.body || null,
     headers: options?.headers || {},
     charset: undefined,
+    useWebview: false,
+    source_type: options?.sourceType ?? 0,
   }),
+
+  fetchWebView: (url: string, options?: {
+    headers?: Record<string, string>
+    webJs?: string
+    timeout?: number
+    sourceType?: number
+  }) => invoke('fetch_url', {
+    url,
+    method: 'GET',
+    body: null,
+    headers: options?.headers || {},
+    charset: undefined,
+    useWebview: true,
+    webJs: options?.webJs || null,
+    timeout_secs: options?.timeout ? Math.ceil(options.timeout / 1000) : 30,
+    source_type: options?.sourceType ?? 0,
+  }),
+
+  downloadBinary: (url: string, headers?: Record<string, string>) =>
+    invoke('download_binary', { url, headers }),
 }
 
-// ─── JS 执行器（deno_core）───
+// ─── 登录 WebView ───
+export async function loginWebview(url: string, title?: string, timeoutSecs?: number): Promise<string> {
+  return invoke('login_webview', { url, title, timeoutSecs })
+}
+
+// ─── JS 执行器（强制走 Rust deno_core）───
+let executorReady = false
+
 async function executeJs(code: string, context: Record<string, any>): Promise<string> {
   try {
     const response: any = await invoke('execute_js_rule', {
-      request: { code, context, timeoutMs: 5000 }
+      request: { 
+        code, 
+        context, 
+        timeoutMs: 30000 
+      }
     })
-    if (response.success && response.result) {
-      return response.result
+    if (response && response.success) {
+      const rawResult = response.result || ''
+      console.log('[executeJs] result len=' + rawResult.length + ' preview=' + rawResult.substring(0, 300))
+      return rawResult
     }
-  } catch {}
-  // 回退：浏览器 new Function
-  try {
-    const keys = Object.keys(context)
-    const values = Object.values(context)
-    const fn = new Function(...keys, 'return (' + code + ')')
-    const result = fn(...values)
-    return result != null ? String(result) : ''
-  } catch { return '' }
+    if (response && response.error) {
+      console.warn('[executeJs] error:', response.error)
+      return ''
+    }
+    return ''
+  } catch (err: any) {
+    console.error('[executeJs] invoke failed:', err)
+    return ''
+  }
 }
 
-// 注入到 engine
+// 注入 JS 执行器到引擎
 import('../../engine/core/url/index.js').then(({ setJsExecutor }) => {
   setJsExecutor(executeJs)
+  executorReady = true
+}).catch(err => {
+  console.error('[API] URL解析 JS执行器注入失败:', err)
+})
+
+import('../../engine/core/rule-parser/js.js').then(({ setJsExecutor }) => {
+  setJsExecutor(executeJs)
+  executorReady = true
+}).catch(err => {
+  console.error('[API] 规则解析 JS执行器注入失败:', err)
 })
 
 // ─── 引擎命令 ───
 export const engine = {
-  search: (source: any, keyword: string, page: number = 1) =>
-    invoke('engine_search', { source, keyword, page }),
-
   batchSearch: (sources: any[], keyword: string, page: number = 1) =>
     invoke('engine_batch_search', { sources, keyword, page }),
-
-  getToc: (source: any, tocUrl: string, book?: any) =>
-    invoke('engine_get_toc', { source, tocUrl, book }),
-
-  getContent: (source: any, chapterUrl: string, bookKind?: string) =>
-    invoke('engine_get_content', { source, chapterUrl, bookKind }),
-
-  getBookInfo: (source: any, bookUrl: string) =>
-    invoke('engine_get_book_info', { source, bookUrl }),
 
   executeJs: executeJs,
 
   parseRule: (source: any, rule: string, data: any, ctx?: Record<string, any>) =>
     invoke('engine_parse_rule', { source, rule, data, context: ctx }),
 
-  getExploreBooks: (source: any, categoryUrl: string, page: number = 1) =>
-    invoke('engine_get_explore_books', { source, categoryUrl, page }),
+  getExploreBooks: async (source: any, categoryUrl: string, page: number = 1) => {
+    const { getExploreBooks } = await import('../../engine/business/explore.js')
+    return getExploreBooks(source, categoryUrl, page)
+  },
 
-  getExploreCategories: (index: number) =>
-    invoke('get_explore_categories', { sourceIndex: index }),
+  getExploreCategories: async (sourceIndex: number) => {
+    const result = await invoke('get_explore_categories', { sourceIndex })
+    if (result && Array.isArray(result) && result.length > 0) {
+      return result
+    }
+    const sources = await store.get('bookSource')
+    const source = Array.isArray(sources) ? sources[sourceIndex] : null
+    if (!source) return []
+    const { getExploreCategories } = await import('../../engine/business/explore.js')
+    return getExploreCategories(source)
+  },
 }

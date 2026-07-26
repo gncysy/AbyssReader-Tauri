@@ -30,11 +30,34 @@ export interface JavaApiOptions {
 export function createJavaApi(options: JavaApiOptions = {}): Record<string, any> {
   const sourceKey = options.sourceKey || 'default'
 
+  const netApi = createNetApi({ cookie: options.cookie });
   return {
     source: wrapSource(options.source),
-    ...createNetApi({ cookie: options.cookie }),
+    ...netApi,
     ...createCryptoApi(),
     ...createStorageApi(sourceKey),
     ...createUtilsApi(),
+    webView: (html: string, url: string, js: string) => netApi.ajax(url || ''),
+    webViewGetSource: (html: string, url: string, js: string, regex: string) => netApi.ajax(url || ''),
+    webViewGetOverrideUrl: (html: string, url: string, js: string, regex: string) => netApi.ajax(url || ''),
+    webJsExecute: (html: string, js: string) => netApi.ajax(''),
+    startBrowser: (url: string) => { window.open(url, '_blank'); },
+    startBrowserAwait: (url: string, title: string) => { window.open(url, '_blank'); return ''; },
+    showBrowser: () => {},
+    showPhoto: (src: string) => { window.open(src, '_blank'); },
+    getVerificationCode: () => '',
+    searchBook: (keyword: string, source: any) => {},
+    openUrl: (url: string) => { window.open(url, '_blank'); },
+    copyText: (text: string) => { navigator.clipboard?.writeText(text); },
+    loadCookies: () => {},
+    saveCookies: () => {},
+    loginComplete: (url: string, cookie: string) => {},
+    readBookConfig: {},
+    refreshExplore: () => {},
+    refreshBookInfo: () => {},
+    upLoginData: (info: string) => {},
+    eventListener: false,
+    on: () => {},
+    emit: () => {},
   }
 }

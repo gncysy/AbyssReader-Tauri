@@ -36,6 +36,7 @@ const menuItems = [
   { path: '/settings/webdav', label: 'WebDAV 同步', desc: '与 Legado 无缝衔接' },
   { path: '/settings/about', label: '关于', desc: '版本信息' },
   { path: '/settings/replaceRules', label: '替换规则', desc: '正则/文本替换净化正文' },
+  { path: '/settings/network', label: '其他设置', desc: 'User-Agent / 网络配置' },
 ]
 
 function navigateTo(path: string) { router.push(path).catch(() => {}) }
@@ -52,3 +53,4 @@ function navigateTo(path: string) { router.push(path).catch(() => {}) }
 .settings-item:last-child { border-bottom: none; }
 .settings-item:hover { background: var(--bg-hover); }
 </style>
+

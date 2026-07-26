@@ -11,6 +11,7 @@ import Data from '../pages/settings/Data.vue'
 import WebDAV from '../pages/settings/WebDAV.vue'
 import About from '../pages/settings/About.vue'
 import ReplaceRules from '../pages/settings/ReplaceRules.vue'
+import Network from '../pages/settings/Network.vue'
 
 const routes = [
   { path: '/', redirect: '/bookshelf' },
@@ -26,6 +27,7 @@ const routes = [
   { path: '/settings/webdav', name: 'webdav', component: WebDAV },
   { path: '/settings/about', name: 'about', component: About },
   { path: '/settings/replaceRules', name: 'replaceRules', component: ReplaceRules },
+  { path: '/settings/network', name: 'network', component: Network },
 ]
 
 export const router = createRouter({

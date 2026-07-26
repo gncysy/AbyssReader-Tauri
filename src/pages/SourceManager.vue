@@ -3,10 +3,11 @@
     <header class="page-header">
       <div>
         <h1 class="page-title">书源管理</h1>
-        <p class="page-subtitle">{{ filteredSources.length }} / {{ safeSources.length }} 个书源</p>
+        <p class="page-subtitle">{{ selectedCount > 0 ? `已选 ${selectedCount} / ` : '' }}{{ filteredList.length }} / {{ safeSources.length }} 个书源</p>
       </div>
       <div class="header-actions">
-        <input v-model="searchText" type="text" placeholder="搜索书源..." class="input-search" style="margin-right:8px" name="source-search" id="source-search" />
+        <input v-model="searchText" type="text" placeholder="搜索书源..." class="input-search" style="margin-right:8px" name="source-search" id="source-search" autocomplete="off" />
+        <CustomDropdown v-model="selectedGroup" :options="groupOptions" placeholder="全部分组" @update:modelValue="onGroupChange" style="min-width:120px" />
         <button class="btn-secondary" @click="triggerFileInput">上传文件</button>
         <button class="btn-secondary" @click="showUrlModal = true">从 URL</button>
         <button class="btn-primary" @click="showJsonModal = true">粘贴 JSON</button>
@@ -23,24 +24,56 @@
       <span class="import-label">{{ importLabel }}</span>
     </div>
 
-    <div v-if="filteredSources.length > 0" class="source-table">
+    <div class="batch-actions" v-if="selectedIndices.size > 0">
+      <span style="font-size:13px;color:var(--text-secondary)">已选 {{ selectedIndices.size }} 个</span>
+      <button class="btn-secondary btn-sm" @click="batchEnable">批量启用</button>
+      <button class="btn-secondary btn-sm" @click="batchDisable">批量禁用</button>
+      <button class="btn-secondary btn-sm" @click="invertSelection">反选</button>
+      <button class="btn-primary btn-sm" :disabled="optimizing" @click="batchOptimize">
+        {{ optimizing ? '优化中...' : '优化' }}
+        <span class="help-badge" title="使用 oxc AST 引擎自动修复书源 JS 代码中的 V8 兼容性问题（如函数参数与 let/const 变量冲突）。优化后代码会被持久化，后续执行无需再次转换。">?</span>
+      </button>
+      <button class="btn-danger btn-sm" @click="batchDelete">批量删除</button>
+    </div>
+
+    <div v-if="Object.keys(groupedSources).length > 0" class="source-table">
       <div class="table-header">
+        <label class="checkbox-all" @click.stop>
+          <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" name="select-all" id="select-all" />
+        </label>
         <span>名称</span>
+        <span>分组</span>
         <span>状态</span>
         <span>测试结果</span>
         <span>操作</span>
       </div>
-      <div v-for="(item, idx) in filteredSources" :key="item.originalIndex" class="table-row" @click="showSourceDetail(item.originalIndex)">
-        <span class="source-name">{{ item.source.bookSourceName || item.source.name }}</span>
-        <span><span class="status-dot" :class="item.source.enabled ? 'enabled' : 'disabled'"></span></span>
-        <span class="test-result">{{ testResults[item.originalIndex] || '—' }}</span>
-        <div class="row-actions" @click.stop>
-          <button class="btn-secondary" style="padding:4px 10px;font-size:12px" @click="openDebug(item.originalIndex)">调试</button>
-          <button class="btn-secondary" style="padding:4px 10px;font-size:12px" :disabled="testingIdx === item.originalIndex" @click="testSource(item.originalIndex)">{{ testingIdx === item.originalIndex ? '...' : '测试' }}</button>
-          <button class="btn-secondary" style="padding:4px 10px;font-size:12px" @click="toggleSource(item.originalIndex)">{{ item.source.enabled ? '禁用' : '启用' }}</button>
-          <button class="btn-danger" style="padding:4px 10px;font-size:12px" @click="deleteSource(item.originalIndex)">删除</button>
+      <template v-for="(group, groupName) in groupedSources" :key="groupName">
+        <div class="group-header" @click="toggleGroupCollapse(groupName)">
+          <svg class="group-toggle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline v-if="!collapsedGroups.has(groupName)" points="6 9 12 15 18 9" />
+            <polyline v-else points="9 18 15 12 9 6" />
+          </svg>
+          <span class="group-name">{{ groupName || '未分组' }}</span>
+          <span class="group-count">{{ group.length }} 个书源</span>
         </div>
-      </div>
+        <div v-show="!collapsedGroups.has(groupName)">
+          <div v-for="item in group" :key="item.originalIndex" class="table-row" :class="{ selected: selectedIndices.has(item.originalIndex) }">
+            <label class="checkbox-cell" @click.stop>
+              <input type="checkbox" :checked="selectedIndices.has(item.originalIndex)" @change="toggleSelect(item.originalIndex)" :name="'source-' + item.originalIndex" :id="'source-' + item.originalIndex" />
+            </label>
+            <span class="source-name" @click="showSourceDetail(item.originalIndex)">{{ item.source.bookSourceName || item.source.name }}</span>
+            <span class="source-group">{{ item.source.bookSourceGroup || '-' }}</span>
+            <span><span class="status-dot" :class="item.source.enabled !== false ? 'enabled' : 'disabled'"></span></span>
+            <span class="test-result">{{ testResults[item.originalIndex] || '-' }}</span>
+            <div class="row-actions" @click.stop>
+              <button class="btn-secondary" style="padding:4px 10px;font-size:12px" @click="openDebug(item.originalIndex)">调试</button>
+              <button class="btn-secondary" style="padding:4px 10px;font-size:12px" :disabled="testingIdx === item.originalIndex" @click="testSource(item.originalIndex)">{{ testingIdx === item.originalIndex ? '...' : '测试' }}</button>
+              <button class="btn-secondary" style="padding:4px 10px;font-size:12px" @click="toggleSource(item.originalIndex)">{{ item.source.enabled !== false ? '禁用' : '启用' }}</button>
+              <button class="btn-danger" style="padding:4px 10px;font-size:12px" :disabled="deletingIdx >= 0" @click="deleteSource(item.originalIndex)">删除</button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <div v-else class="empty-state"><h3>{{ searchText ? '未找到匹配的书源' : '暂无书源' }}</h3></div>
@@ -60,19 +93,23 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useMessage, useDialog, NModal, NInput } from 'naive-ui'
 import { store, source as sourceApi } from '@/api'
-import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import DebugPanel from '@/components/DebugPanel.vue'
+import CustomDropdown from '@/components/CustomDropdown.vue'
 import type { BookSource } from '@shared/types'
 
 const message = useMessage()
 const dialog = useDialog()
 const sources = ref<BookSource[]>([])
 const searchText = ref('')
+const selectedGroup = ref('')
+const collapsedGroups = ref<Set<string>>(new Set())
 const testResults = ref<Record<number, string>>({})
 const testingIdx = ref(-1)
 const testingAll = ref(false)
 const testProgress = ref(0)
 const deletingFailed = ref(false)
+const deletingIdx = ref(-1)
 const showJsonModal = ref(false)
 const showUrlModal = ref(false)
 const jsonInput = ref('')
@@ -83,47 +120,138 @@ const importProgress = ref(0)
 const importLabel = ref('')
 const showDebugPanel = ref(false)
 const debugSourceIndex = ref(-1)
+const selectedIndices = ref(new Set<number>())
+const optimizing = ref(false)
 
 let unlistenTest: (() => void) | null = null
 
 const safeSources = computed(() => Array.isArray(sources.value) ? sources.value : [])
 
-const filteredSources = computed(() => {
+const allGroups = computed(() => {
+  const groups = new Set<string>()
+  for (const s of safeSources.value) {
+    const g = s.bookSourceGroup || ''
+    if (g) groups.add(g)
+  }
+  return Array.from(groups).sort()
+})
+
+const groupOptions = computed(() => {
+  const opts: { label: string; value: string }[] = [{ label: '全部分组', value: '' }]
+  for (const g of allGroups.value) {
+    opts.push({ label: g, value: g })
+  }
+  return opts
+})
+
+const filteredList = computed(() => {
   const arr = safeSources.value
-  if (!searchText.value.trim()) return arr.map((s, i) => ({ source: s, originalIndex: i }))
   const kw = searchText.value.trim().toLowerCase()
+  const group = selectedGroup.value
   const result: { source: BookSource; originalIndex: number }[] = []
   arr.forEach((s, i) => {
-    if ((s.bookSourceName || s.name || '').toLowerCase().includes(kw) || (s.bookSourceUrl || '').toLowerCase().includes(kw)) {
-      result.push({ source: s, originalIndex: i })
+    if (group && (s.bookSourceGroup || '') !== group) return
+    if (kw) {
+      const name = (s.bookSourceName || s.name || '').toLowerCase()
+      const url = (s.bookSourceUrl || '').toLowerCase()
+      if (!name.includes(kw) && !url.includes(kw)) return
     }
+    result.push({ source: s, originalIndex: i })
   })
   return result
 })
 
-async function loadSources() {
-  try {
-    const raw = await store.get('bookSource')
-    sources.value = Array.isArray(raw) ? raw : []
-  } catch { sources.value = [] }
+const groupedSources = computed(() => {
+  const groups: Record<string, { source: BookSource; originalIndex: number }[]> = {}
+  for (const item of filteredList.value) {
+    const groupName = item.source.bookSourceGroup || ''
+    if (!groups[groupName]) groups[groupName] = []
+    groups[groupName].push(item)
+  }
+  const sorted: Record<string, { source: BookSource; originalIndex: number }[]> = {}
+  const keys = Object.keys(groups).sort((a, b) => {
+    if (a === '') return 1
+    if (b === '') return -1
+    return a.localeCompare(b)
+  })
+  for (const k of keys) { sorted[k] = groups[k] }
+  return sorted
+})
+
+const selectedCount = computed(() => selectedIndices.value.size)
+const isAllSelected = computed(() => filteredList.value.length > 0 && filteredList.value.every(item => selectedIndices.value.has(item.originalIndex)))
+
+function toggleGroupCollapse(groupName: string) {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(groupName)) { next.delete(groupName) } else { next.add(groupName) }
+  collapsedGroups.value = next
 }
 
+function onGroupChange(val: string | number) { selectedGroup.value = String(val) }
+
+function toggleSelectAll() {
+  if (isAllSelected.value) { selectedIndices.value = new Set() }
+  else { selectedIndices.value = new Set(filteredList.value.map(item => item.originalIndex)) }
+}
+
+function toggleSelect(index: number) {
+  const next = new Set(selectedIndices.value)
+  if (next.has(index)) { next.delete(index) } else { next.add(index) }
+  selectedIndices.value = next
+}
+
+function invertSelection() {
+  const all = new Set(filteredList.value.map(item => item.originalIndex))
+  const cur = selectedIndices.value
+  const inv = new Set<number>()
+  all.forEach(i => { if (!cur.has(i)) inv.add(i) })
+  selectedIndices.value = inv
+}
+
+async function batchEnable() { for (const i of selectedIndices.value) { await toggleSource(i, true) } selectedIndices.value = new Set(); await loadSources() }
+async function batchDisable() { for (const i of selectedIndices.value) { await toggleSource(i, false) } selectedIndices.value = new Set(); await loadSources() }
+
+async function batchOptimize() {
+  const indices = [...selectedIndices.value]
+  if (indices.length === 0) return
+  optimizing.value = true
+  try {
+    const results: string[] = await invoke('optimize_book_sources', { indices })
+    await loadSources()
+    selectedIndices.value = new Set()
+    message.success(`优化完成: ${results.length} 个书源已处理`)
+  } catch (err: any) { message.error('优化失败: ' + (err?.message || String(err))) }
+  finally { optimizing.value = false }
+}
+
+async function batchDelete() {
+  dialog.warning({
+    title: '批量删除', content: `确定删除选中的 ${selectedIndices.value.size} 个书源？`, positiveText: '删除', negativeText: '取消',
+    onPositiveClick: async () => {
+      const arr = safeSources.value
+      const toRemove = [...selectedIndices.value].sort((a, b) => b - a)
+      for (const i of toRemove) { if (i < arr.length) arr.splice(i, 1) }
+      sources.value = [...arr]
+      await store.set('bookSource', arr)
+      selectedIndices.value = new Set()
+      await loadSources()
+      message.success('已删除')
+    },
+  })
+}
+
+async function loadSources() { try { sources.value = (await store.get('bookSource')) || [] } catch { sources.value = [] } }
+
 function setTestResult(idx: number, value: string) { testResults.value = { ...testResults.value, [idx]: value } }
-
 function openDebug(idx: number) { debugSourceIndex.value = idx; showDebugPanel.value = true }
-
 function showSourceDetail(idx: number) {
   const arr = safeSources.value
-  if (idx >= 0 && idx < arr.length) {
-    const s = arr[idx]
-    message.info(`${s.bookSourceName || s.name}\nURL: ${s.bookSourceUrl}\n分组: ${s.bookSourceGroup || '未分组'}`)
-  }
+  if (idx >= 0 && idx < arr.length) { message.info(`${arr[idx].bookSourceName || arr[idx].name}\nURL: ${arr[idx].bookSourceUrl}`) }
 }
 
 async function testSource(idx: number) {
   testingIdx.value = idx
-  try { setTestResult(idx, await sourceApi.test(idx) as unknown as string) }
-  catch (err: any) { setTestResult(idx, '失败: ' + err.message) }
+  try { setTestResult(idx, await sourceApi.test(idx)) } catch (err: any) { setTestResult(idx, '失败: ' + err.message) }
   finally { testingIdx.value = -1 }
 }
 
@@ -131,8 +259,7 @@ async function testAll() {
   if (!safeSources.value.length) { message.warning('没有书源可测试'); return }
   if (unlistenTest) { try { unlistenTest() } catch {}; unlistenTest = null }
   testingAll.value = true; testProgress.value = 0; testResults.value = {}
-  unlistenTest = await listen('source-test-result', (event: any) => {
-    const result = event.payload
+  const { listen } = await import('@tauri-apps/api/event'); unlistenTest = await listen('source-test-result', (result: any) => {
     if (result.status === 'ok') setTestResult(result.index, `连接成功 / ${result.time_ms}ms / ${result.size_kb}KB`)
     else setTestResult(result.index, `失败: ${result.error || '未知错误'}`)
     testProgress.value++
@@ -142,30 +269,24 @@ async function testAll() {
   finally { testingAll.value = false; if (unlistenTest) { try { unlistenTest() } catch {}; unlistenTest = null } }
 }
 
-async function toggleSource(idx: number) {
+async function toggleSource(idx: number, force?: boolean) {
   try {
     const arr = safeSources.value
-    if (idx < arr.length) {
-      arr[idx].enabled = !arr[idx].enabled
-      sources.value = [...arr]
-      await store.set('bookSource', arr)
-    }
+    if (idx < arr.length) { arr[idx].enabled = force !== undefined ? force : arr[idx].enabled !== false; sources.value = [...arr]; await store.set('bookSource', arr) }
   } catch (err: any) { message.error('操作失败: ' + err.message) }
 }
 
 async function deleteSource(idx: number) {
+  if (deletingIdx.value >= 0) return
   const arr = safeSources.value
   if (idx >= arr.length) return
   dialog.warning({
     title: '确认删除', content: `删除「${arr[idx].bookSourceName || arr[idx].name}」？`, positiveText: '删除', negativeText: '取消',
     onPositiveClick: async () => {
-      try {
-        arr.splice(idx, 1)
-        sources.value = [...arr]
-        await store.set('bookSource', arr)
-        await loadSources()
-        message.success('已删除')
-      } catch (err: any) { message.error('删除失败: ' + err.message) }
+      deletingIdx.value = idx
+      try { arr.splice(idx, 1); sources.value = [...arr]; await store.set('bookSource', arr); await loadSources(); message.success('已删除') }
+      catch (err: any) { message.error('删除失败: ' + err.message) }
+      finally { deletingIdx.value = -1 }
     },
   })
 }
@@ -184,7 +305,6 @@ async function deleteFailed() {
 }
 
 function triggerFileInput() { fileInput.value?.click() }
-
 async function onFileSelected(event: Event) {
   const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return
   importing.value = true; importProgress.value = 10; importLabel.value = '读取文件...'
@@ -192,7 +312,6 @@ async function onFileSelected(event: Event) {
   catch (err: any) { message.error('导入失败: ' + err.message) }
   finally { input.value = ''; setTimeout(() => { importing.value = false }, 800) }
 }
-
 async function handleImportJson() {
   if (!jsonInput.value.trim()) { message.warning('请粘贴书源 JSON'); return }
   importing.value = true
@@ -200,7 +319,6 @@ async function handleImportJson() {
   catch (err: any) { message.error('导入失败: ' + err.message) }
   finally { setTimeout(() => { importing.value = false }, 800) }
 }
-
 async function handleImportFromUrl() {
   if (!urlInput.value.trim()) { message.warning('请输入 URL'); return }
   importing.value = true
@@ -220,15 +338,58 @@ onUnmounted(() => { if (unlistenTest) { try { unlistenTest() } catch {} } })
 .import-bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-card); border-radius: var(--radius-md); margin-bottom: 16px; border: 1px solid var(--border-color); }
 .import-text { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
 .import-label { font-size: 12px; color: var(--text-muted); }
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: var(--bg-active);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+}
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 12px;
+  height: 28px;
+}
+.help-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.35);
+  color: rgba(255,255,255,0.7);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
 .source-table { margin-bottom: 24px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
-.table-header { display: grid; grid-template-columns: 1.5fr 60px 2fr 200px; gap: 4px; padding: 10px 18px; background: var(--bg-hover); border-bottom: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); font-weight: 500; align-items: center; }
-.table-row { display: grid; grid-template-columns: 1.5fr 60px 2fr 200px; gap: 4px; padding: 12px 18px; border-bottom: 1px solid var(--border-color); align-items: center; font-size: 14px; cursor: pointer; transition: background 0.18s; }
+.table-header { display: grid; grid-template-columns: 36px 1.5fr 1fr 60px 2fr 200px; gap: 4px; padding: 10px 18px; background: var(--bg-hover); border-bottom: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); font-weight: 500; align-items: center; }
+.group-header { display: flex; align-items: center; gap: 8px; padding: 8px 18px; background: var(--bg); border-bottom: 1px solid var(--border-color); cursor: pointer; font-size: 13px; color: var(--text-secondary); transition: background 0.15s; }
+.group-header:hover { background: var(--bg-hover); }
+.group-toggle { flex-shrink: 0; color: var(--text-muted); transition: transform 0.25s ease; }
+.group-header:hover .group-toggle { color: var(--text-secondary); }
+.group-name { font-weight: 600; color: var(--text-primary); }
+.group-count { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.table-row { display: grid; grid-template-columns: 36px 1.5fr 1fr 60px 2fr 200px; gap: 4px; padding: 10px 18px; border-bottom: 1px solid var(--border-color); align-items: center; font-size: 13px; cursor: pointer; transition: background 0.18s; }
 .table-row:hover { background: var(--bg-hover); }
+.table-row.selected { background: var(--bg-active); }
 .table-row:last-child { border-bottom: none; }
+.checkbox-all, .checkbox-cell { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.checkbox-all input, .checkbox-cell input { accent-color: var(--brand); width: 16px; height: 16px; cursor: pointer; }
 .source-name { color: var(--text-primary); font-weight: 500; }
+.source-group { color: var(--text-muted); font-size: 12px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.enabled { background: #4caf50; box-shadow: 0 0 6px rgba(76,175,80,0.4); }
 .status-dot.disabled { background: rgba(128,128,128,0.4); }
-.test-result { color: var(--text-secondary); font-size: 13px; }
+.test-result { color: var(--text-secondary); font-size: 12px; }
 .row-actions { display: flex; gap: 4px; align-items: center; }
+.hidden { display: none; }
+.progress-bar { height: 5px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--brand); border-radius: 3px; transition: width 0.4s ease; }
 </style>

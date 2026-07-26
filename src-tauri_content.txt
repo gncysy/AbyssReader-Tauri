@@ -1,0 +1,2222 @@
+
+
+=== DIRECTORY: src-tauri/src ===
+
+
+=== FILE: src-tauri/Cargo.toml ===
+
+[package]
+name = "abyss-reader-tauri"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "abyss_reader_tauri_lib"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "abyss-reader-tauri"
+path = "src/main.rs"
+
+[dependencies]
+arboard = "3"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+encoding_rs = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "2"
+once_cell = "1"
+parking_lot = "0.12"
+url = "2"
+regex = "1"
+md5 = "0.7"
+urlencoding = "2.1"
+deno_core = "0.315"
+scraper = "0.20"
+aes = "0.8"
+cbc = "0.1"
+uuid = { version = "1", features = ["v4"] }
+open = "5"
+hanconv = "0.5"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+
+=== END FILE ===
+
+
+=== DIRECTORY: src-tauri/src/commands ===
+
+
+=== DIRECTORY: src-tauri/src/js_runtime ===
+
+
+=== DIRECTORY: src-tauri/src/network ===
+
+
+=== DIRECTORY: src-tauri/src/storage ===
+
+
+=== FILE: src-tauri/src/error.rs ===
+
+use serde::Serialize;
+use thiserror::Error;
+
+pub type Result<T> = std::result::Result<T, AbyssError>;
+
+#[derive(Error, Debug, Serialize)]
+pub enum AbyssError {
+    #[error("网络请求失败: {0}")]
+    NetworkError(String),
+
+    #[error("书源解析错误: {0}")]
+    ParseError(String),
+
+    #[error("JS执行错误: {0}")]
+    JsError(String),
+
+    #[error("数据库错误: {0}")]
+    DbError(String),
+
+    #[error("序列化错误: {0}")]
+    SerializationError(String),
+
+    #[error("IO错误: {0}")]
+    IoError(String),
+
+    #[error("书源未找到: {0}")]
+    SourceNotFound(String),
+
+    #[error("书籍未找到: {0}")]
+    BookNotFound(String),
+
+    #[error("章节未找到: {0}")]
+    ChapterNotFound(String),
+
+    #[error("配置错误: {0}")]
+    ConfigError(String),
+
+    #[error("WebView错误: {0}")]
+    WebViewError(String),
+
+    #[error("代理错误: {0}")]
+    ProxyError(String),
+}
+
+impl From<reqwest::Error> for AbyssError {
+    fn from(err: reqwest::Error) -> Self {
+        AbyssError::NetworkError(err.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for AbyssError {
+    fn from(err: rusqlite::Error) -> Self {
+        AbyssError::DbError(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for AbyssError {
+    fn from(err: serde_json::Error) -> Self {
+        AbyssError::SerializationError(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for AbyssError {
+    fn from(err: std::io::Error) -> Self {
+        AbyssError::IoError(err.to_string())
+    }
+}
+
+impl From<tauri::Error> for AbyssError {
+    fn from(err: tauri::Error) -> Self {
+        AbyssError::WebViewError(err.to_string())
+    }
+}
+
+impl From<url::ParseError> for AbyssError {
+    fn from(err: url::ParseError) -> Self {
+        AbyssError::ConfigError(format!("URL解析失败: {}", err))
+    }
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/lib.rs ===
+
+pub mod commands;
+pub mod error;
+pub mod network;
+pub mod js_runtime;
+pub mod storage;
+
+use tauri::Manager;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            commands::store_get,
+            commands::store_set,
+            commands::store_delete,
+            commands::store_get_all,
+            commands::get_book_sources,
+            commands::add_book_source,
+            commands::import_sources_from_url,
+            commands::toggle_book_source,
+            commands::delete_book_source,
+            commands::delete_failed_sources,
+            commands::test_book_source,
+            commands::test_all_sources,
+            commands::get_explore_categories,
+            commands::execute_js_rule,
+            commands::source_login,
+            commands::source_login_ui,
+            commands::source_login_action,
+            commands::fetch_url,
+            commands::download_binary,
+            commands::proxy_image,
+            commands::login_webview,
+            commands::engine_search,
+            commands::engine_batch_search,
+            commands::engine_get_toc,
+            commands::engine_get_content,
+            commands::engine_get_book_info,
+            commands::engine_parse_rule,
+            commands::import_txt,
+            commands::get_local_book_chapters,
+            commands::get_local_chapter_content,
+        ])
+        .setup(|app| {
+            crate::js_runtime::ops::set_app_handle(app.handle().clone());
+            let app_data_dir = app.path().app_data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("abyss-reader"));
+            std::fs::create_dir_all(&app_data_dir).ok();
+            let lib_cache_dir = app_data_dir.join("lib_cache");
+            crate::js_runtime::ops::set_lib_cache_dir(lib_cache_dir);
+            let image_cache_dir = app_data_dir.join("image_cache");
+            crate::commands::fetch_url::set_image_cache_dir(image_cache_dir);
+            crate::js_runtime::ops::set_cookie_save_dir(app_data_dir.clone());
+
+            let db_path = app_data_dir.join("abyss-reader.db");
+            if let Err(e) = storage::init_db(db_path.to_str().unwrap_or("abyss-reader.db")) {
+                eprintln!("初始化数据库失败: {}", e);
+            }
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("启动失败");
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/main.rs ===
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn main() {
+    abyss_reader_tauri_lib::run()
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/bookshelf.rs ===
+
+use crate::error::Result;
+use crate::storage;
+use serde_json::Value;
+
+#[tauri::command]
+pub async fn get_bookshelf() -> Result<Vec<Value>> {
+    storage::load_bookshelf()
+}
+
+#[tauri::command]
+pub async fn add_to_bookshelf(book: Value) -> Result<()> {
+    let mut books = storage::load_bookshelf()?;
+    books.insert(0, book);
+    storage::save_bookshelf(&books)
+}
+
+#[tauri::command]
+pub async fn remove_from_bookshelf(book_url: String) -> Result<()> {
+    let books = storage::load_bookshelf()?;
+    let filtered: Vec<Value> = books
+        .into_iter()
+        .filter(|b| b.get("bookUrl").and_then(|v| v.as_str()) != Some(&book_url))
+        .collect();
+    storage::save_bookshelf(&filtered)
+}
+
+#[tauri::command]
+pub async fn update_reading_progress(
+    book_url: String,
+    chapter_id: i64,
+    chapter_title: String,
+    scroll_percent: f64,
+) -> Result<()> {
+    let mut progress = storage::load_reading_progress()?;
+    let entry = serde_json::json!({
+        "bookUrl": book_url,
+        "chapterId": chapter_id,
+        "chapterTitle": chapter_title,
+        "scrollPercent": scroll_percent,
+        "updatedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Some(obj) = progress.as_object_mut() {
+        obj.insert(book_url.clone(), entry);
+    }
+    storage::save_reading_progress(&progress)
+}
+
+#[tauri::command]
+pub async fn get_reading_progress(book_url: String) -> Result<Option<Value>> {
+    let progress = storage::load_reading_progress()?;
+    Ok(progress.get(&book_url).cloned())
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/engine.rs ===
+
+use crate::error::Result;
+use crate::network::http::execute_http_request;
+use serde_json::Value;
+use std::collections::HashMap;
+
+#[tauri::command] pub async fn store_get(key: String) -> Result<Option<String>> { crate::storage::store_get(&key) }
+#[tauri::command] pub async fn store_set(key: String, value: String) -> Result<()> { crate::storage::store_set(&key, &value) }
+#[tauri::command] pub async fn store_delete(key: String) -> Result<()> { crate::storage::store_delete(&key) }
+#[tauri::command] pub async fn store_get_all() -> Result<HashMap<String, Value>> {
+    let rows = crate::storage::store_get_all()?;
+    let mut map = HashMap::new();
+    for (key, value) in rows {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&value) { map.insert(key, parsed); }
+        else { map.insert(key, Value::String(value)); }
+    }
+    Ok(map)
+}
+
+fn extract_headers(source: &Value) -> Option<HashMap<String, String>> {
+    let header_str = source.get("header").and_then(|v| v.as_str())?;
+    let trimmed = header_str.trim();
+    
+    // 1. 包含 JS 代码 → 默认 UA
+    if trimmed.contains("<js>") || trimmed.contains("@js:") {
+        return Some(HashMap::from([("User-Agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string())]));
+    }
+    
+    // 2. 单引号 JSON → 转双引号后解析
+    let normalized = trimmed.replace('\'', "\"").replace('\n', "").replace('\r', "").replace('\t', " ");
+    if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(&normalized) {
+        return Some(h);
+    }
+    
+    // 3. 本身是标准 JSON
+    if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(trimmed) {
+        return Some(h);
+    }
+    
+    // 4. 回退：逐行提取 key: value
+    let mut map = HashMap::new();
+    for line in trimmed.lines() {
+        let l = line.trim().trim_matches(',').trim().replace('\'', "\"");
+        if let Some(colon) = l.find(':') {
+            let key = l[..colon].trim().trim_matches('"').to_string();
+            let value = l[colon+1..].trim().trim_matches('"').to_string();
+            if !key.is_empty() && !value.is_empty() {
+                map.insert(key, value);
+            }
+        }
+    }
+    
+    if map.is_empty() {
+        map.insert("User-Agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string());
+    }
+    Some(map)
+}
+
+fn resolve_url(url: &str, base_url: &str) -> String {
+    if url.starts_with("http") { return url.to_string() }
+    format!("{}/{}", base_url.trim_end_matches('/'), url.trim_start_matches('/'))
+}
+
+#[tauri::command] pub async fn engine_search(source: Value, keyword: String, page: i32) -> Result<Value> {
+    let base_url = source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let search_url = source.get("searchUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let mut url = search_url.replace("{{key}}", &urlencoding::encode(&keyword)).replace("{{page}}", &page.to_string());
+    if !url.starts_with("http") { url = resolve_url(&url, base_url); }
+    let html = execute_http_request(&url, "GET", extract_headers(&source), None, None, 30).await?;
+    Ok(serde_json::json!({ "success": true, "data": { "html": html, "source": source, "keyword": keyword, "page": page } }))
+}
+
+#[tauri::command] pub async fn engine_batch_search(sources: Vec<Value>, keyword: String, page: i32) -> Result<Value> {
+    let mut results = serde_json::Map::new();
+    for source in &sources {
+        let name = source.get("bookSourceName").or_else(|| source.get("name")).and_then(|v| v.as_str()).unwrap_or("unknown");
+        match engine_search(source.clone(), keyword.clone(), page).await {
+            Ok(result) => { results.insert(name.to_string(), result); }
+            Err(e) => { results.insert(name.to_string(), serde_json::json!({ "success": false, "error": e.to_string() })); }
+        }
+    }
+    Ok(serde_json::json!({ "success": true, "data": Value::Object(results), "searchId": format!("search_{}", chrono::Utc::now().timestamp_millis()) }))
+}
+
+#[tauri::command] pub async fn engine_get_toc(source: Value, toc_url: String, book: Option<Value>) -> Result<Value> {
+    let base_url = source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let url = resolve_url(&toc_url, base_url);
+    let html = execute_http_request(&url, "GET", extract_headers(&source), None, None, 30).await?;
+    Ok(serde_json::json!({ "success": true, "data": { "html": html, "source": source, "tocUrl": url, "book": book } }))
+}
+
+#[tauri::command] pub async fn engine_get_content(source: Value, chapter_url: String, book_kind: Option<String>) -> Result<Value> {
+    let base_url = source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let url = resolve_url(&chapter_url, base_url);
+    let html = execute_http_request(&url, "GET", extract_headers(&source), None, None, 30).await?;
+    Ok(serde_json::json!({ "success": true, "data": { "html": html, "source": source, "chapterUrl": url, "bookKind": book_kind } }))
+}
+
+#[tauri::command] pub async fn engine_get_book_info(source: Value, book_url: String) -> Result<Value> {
+    let base_url = source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let url = resolve_url(&book_url, base_url);
+    let html = execute_http_request(&url, "GET", extract_headers(&source), None, None, 30).await?;
+    Ok(serde_json::json!({ "success": true, "data": { "html": html, "source": source, "bookUrl": url } }))
+}
+
+#[tauri::command] pub async fn engine_get_explore_books(source: Value, category_url: String, page: i32) -> Result<Value> {
+    let base_url = source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let mut url = category_url.replace("{{page}}", &page.to_string());
+    if !url.starts_with("http") { url = resolve_url(&url, base_url); }
+    let html = execute_http_request(&url, "GET", extract_headers(&source), None, None, 30).await?;
+    Ok(serde_json::json!({ "success": true, "data": { "html": html, "source": source, "categoryUrl": url, "page": page } }))
+}
+
+#[tauri::command] pub async fn engine_parse_rule(source: Value, rule: String, data: Value, context: Option<Value>) -> Result<Value> {
+    Ok(serde_json::json!({ "success": true, "data": data, "rule": rule, "source": source, "context": context }))
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/fetch_url.rs ===
+
+use crate::error::Result;
+use crate::network::http::execute_http_request;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::fs;
+use serde::Serialize;
+use tauri::WebviewWindowBuilder;
+use tauri::Listener;
+use tokio::sync::oneshot;
+use tokio::time::timeout;
+use std::time::Duration;
+
+const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+static IMAGE_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+pub fn set_image_cache_dir(dir: PathBuf) { let _ = IMAGE_CACHE_DIR.set(dir); }
+fn get_cache_dir() -> PathBuf { IMAGE_CACHE_DIR.get().cloned().unwrap_or_else(|| std::env::temp_dir().join("abyss_image_cache")) }
+fn clean_old_cache(dir: &PathBuf, max_files: usize) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        if files.len() > max_files {
+            files.sort_by_key(|e| e.metadata().map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)).unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+            let to_remove = files.len() - max_files;
+            for entry in files.iter().take(to_remove) { let _ = fs::remove_file(entry.path()); }
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct FetchResponse { pub status: u16, pub data: String, }
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn fetch_url(
+    app: tauri::AppHandle, url: String, method: Option<String>, body: Option<String>,
+    headers: Option<HashMap<String, String>>, charset: Option<String>,
+    useWebview: Option<bool>, webJs: Option<String>, timeoutSecs: Option<u64>, sourceType: Option<i32>,
+) -> Result<String> {
+    if useWebview.unwrap_or(false) {
+        fetch_webview_inner(&app, &url, headers, webJs, timeoutSecs.unwrap_or(30), sourceType).await
+    } else {
+        let method_str = method.unwrap_or_else(|| "GET".into());
+        let timeout = timeoutSecs.unwrap_or(30);
+        execute_http_request(&url, &method_str, headers, body, charset, timeout).await
+    }
+}
+
+async fn fetch_webview_inner(
+    app: &tauri::AppHandle, url: &str, headers: Option<HashMap<String, String>>,
+    web_js: Option<String>, timeout_secs: u64, source_type: Option<i32>,
+) -> Result<String> {
+    let parsed_url = url::Url::parse(url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let window_label = format!("webview_{}", uuid::Uuid::new_v4());
+    let is_comic = source_type == Some(2);
+    let is_novel = source_type == Some(0) || source_type.is_none();
+
+    let block_script = if is_novel {
+        r#"(function(){var o=new MutationObserver(function(){document.querySelectorAll('img,picture,source').forEach(function(e){e.remove()})});o.observe(document.documentElement,{childList:true,subtree:true});var l=new MutationObserver(function(){document.querySelectorAll('link[rel="stylesheet"],link[rel="preload"],link[rel="prefetch"],link[rel="font"]').forEach(function(e){e.remove()})});l.observe(document.documentElement,{childList:true,subtree:true});var s=new MutationObserver(function(){document.querySelectorAll('script:not([type="application/json"])').forEach(function(e){e.remove()})});s.observe(document.documentElement,{childList:true,subtree:true})})()"#
+    } else if is_comic {
+        r#"(function(){document.querySelectorAll('link[rel="font"],link[rel="preload"][as="font"]').forEach(function(e){e.remove()});document.querySelectorAll('script:not([data-main]):not([src*="lazyload"])').forEach(function(e){e.remove()});document.querySelectorAll('img[data-src],img[data-original]').forEach(function(e){var s=e.getAttribute('data-src')||e.getAttribute('data-original');if(s)e.setAttribute('src',s)})})()"#
+    } else { "" };
+
+    let mut builder = WebviewWindowBuilder::new(app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(false).focused(false).skip_taskbar(true).title("").user_agent(DEFAULT_UA);
+    if let Some(h) = &headers { if let Some(ua) = h.get("User-Agent") { builder = builder.user_agent(ua); } }
+
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    if !block_script.is_empty() { let _ = window.eval(block_script); }
+
+    let write_js = if let Some(js) = &web_js {
+        format!("window.name = (function(){{ return {}; }})();", js)
+    } else if is_comic {
+        r#"window.name = (function(){var urls=[];document.querySelectorAll('img,picture source').forEach(function(el){var s=el.getAttribute('src')||el.getAttribute('data-src')||el.getAttribute('data-original');if(s&&s.startsWith('http'))urls.push(s)});return JSON.stringify(Array.from(new Set(urls)))})();"#.to_string()
+    } else {
+        r#"document.querySelectorAll('script,style,link,iframe,noscript,meta').forEach(function(el){el.remove()});window.name=JSON.stringify(document.documentElement.outerHTML);"#.to_string()
+    };
+
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let window_for_thread = window.clone();
+    let write_js_for_thread = write_js.clone();
+    let tx_for_callback = tx_shared.clone();
+
+    std::thread::spawn(move || {
+        let wait_ms = if is_comic { 3000u64 } else { 2000u64 };
+        std::thread::sleep(Duration::from_millis(wait_ms));
+        let w = window_for_thread.clone();
+        let _ = window_for_thread.run_on_main_thread(move || {
+            let _ = w.eval(&write_js_for_thread);
+            std::thread::sleep(Duration::from_millis(200));
+            let w2 = w.clone();
+            let _ = w.eval_with_callback("window.name || ''", move |result| {
+                let mut guard = tx_for_callback.lock().unwrap();
+                if let Some(sender) = guard.take() { let _ = sender.send(result); }
+                let _ = w2.close();
+            });
+        });
+    });
+
+    match timeout(Duration::from_secs(timeout_secs), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("接收数据失败: {}", e))) }
+        Err(_elapsed) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("加载超时".into())) }
+    }
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn login_webview(app: tauri::AppHandle, url: String, title: Option<String>, timeoutSecs: Option<u64>) -> Result<String> {
+    let parsed_url = url::Url::parse(&url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let window_label = format!("login_{}", uuid::Uuid::new_v4());
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    
+    let builder = WebviewWindowBuilder::new(&app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(true).focused(true).skip_taskbar(false)
+        .title(&title.unwrap_or_else(|| "登录".into()))
+        .user_agent(DEFAULT_UA);
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    let tx_clone = tx_shared.clone();
+    
+    let _id = window.listen("tauri://destroyed", move |_| {
+        let cookie_json = crate::js_runtime::ops::get_cookies_json();
+        let mut guard = tx_clone.lock().unwrap();
+        if let Some(sender) = guard.take() { let _ = sender.send(cookie_json); }
+    });
+    
+    match timeout(Duration::from_secs(timeoutSecs.unwrap_or(300)), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("{}", e))) }
+        Err(_) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("登录超时".into())) }
+    }
+}
+
+#[tauri::command]
+pub async fn show_browser(app: tauri::AppHandle, html: String, script: Option<String>, _options: Option<String>) -> Result<String> {
+    let window_label = format!("browser_{}", uuid::Uuid::new_v4());
+    let data_url = format!("data:text/html;charset=utf-8,{}", urlencoding::encode(&html));
+    let parsed_url = url::Url::parse(&data_url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 data URL: {}", e)))?;
+    
+    let builder = WebviewWindowBuilder::new(&app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(true).focused(true).skip_taskbar(false).title("")
+        .user_agent(DEFAULT_UA);
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    
+    if let Some(js) = script { let _ = window.eval(&js); }
+    
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let tc = tx_shared.clone();
+    
+    let _id = window.listen("tauri://destroyed", move |_| {
+        let mut guard = tc.lock().unwrap();
+        if let Some(sender) = guard.take() { let _ = sender.send("closed".into()); }
+    });
+    
+    match timeout(Duration::from_secs(600), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("{}", e))) }
+        Err(_) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("弹窗超时".into())) }
+    }
+}
+
+#[tauri::command]
+pub async fn download_binary(url: String, headers: Option<HashMap<String, String>>) -> Result<String> {
+    use reqwest::Client; use base64::Engine;
+    let client = Client::builder().user_agent(DEFAULT_UA).danger_accept_invalid_certs(true).timeout(Duration::from_secs(30)).build()
+        .map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let mut req = client.get(&url);
+    if let Some(h) = headers { for (k, v) in h { req = req.header(k, v); } }
+    let response = req.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let bytes = response.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[tauri::command]
+pub async fn proxy_image(url: String, source_json: String) -> Result<String> {
+    use reqwest::Client; use base64::Engine;
+    let source: serde_json::Value = serde_json::from_str(&source_json).map_err(|e| crate::error::AbyssError::ParseError(e.to_string()))?;
+    let cache_dir = get_cache_dir(); fs::create_dir_all(&cache_dir).ok();
+    let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = cache_dir.join(&hash);
+    if file_path.exists() { if let Ok(data) = fs::read(&file_path) { return Ok(format!("data:image/webp;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data))); } }
+    let client = Client::builder().danger_accept_invalid_certs(true).timeout(Duration::from_secs(30)).build()
+        .map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let mut req = client.get(&url);
+    if let Some(header_str) = source.get("header").and_then(|v| v.as_str()) {
+        if header_str.starts_with("@js:") || header_str.starts_with("<js>") {
+            req = req.header("User-Agent", "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A) AppleWebKit/537.36")
+                .header("Referer", source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""))
+                .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+        } else { if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(header_str) { for (k, v) in h { req = req.header(k, v); } } }
+    } else { req = req.header("User-Agent", "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A)"); }
+    let response = req.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let final_url = response.url().to_string();
+    let content_type = response.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("image/webp").to_string();
+    let bytes = if final_url.contains("link.webp") || final_url.contains("link/link.webp") {
+        let mut req2 = client.get(&final_url); req2 = req2.header("Referer", source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""));
+        let response2 = req2.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+        response2.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?
+    } else { response.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))? };
+    let _ = fs::write(&file_path, &bytes); clean_old_cache(&cache_dir, 100);
+    Ok(format!("data:{};base64,{}", content_type, base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/js_engine.rs ===
+
+use crate::error::Result;
+use crate::js_runtime::runtime;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JsExecutionRequest {
+    pub code: String,
+    pub context: serde_json::Value,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JsExecutionResponse {
+    pub success: bool,
+    pub result: String,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn execute_js_rule(request: JsExecutionRequest) -> Result<JsExecutionResponse> {
+    let code = preprocess_code(&request.code);
+    let mut context = request.context.clone();
+
+    let ua = crate::storage::store_get("userAgent").unwrap_or_default();
+    let ua = if let Some(ref u) = ua {
+        if u.is_empty() {
+            "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.231 Mobile Safari/537.36"
+        } else {
+            u.as_str()
+        }
+    } else {
+        "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.231 Mobile Safari/537.36"
+    };
+    crate::js_runtime::ops::set_global_ua(ua.to_string());
+
+    if let Some(obj) = context.as_object_mut() {
+        obj.insert("userAgent".into(), serde_json::Value::String(ua.to_string()));
+    }
+
+    let context_json = serde_json::to_string(&context).unwrap_or_else(|_| "{}".into());
+
+    match runtime::execute(&code, &context_json) {
+        Ok(result) => Ok(JsExecutionResponse {
+            success: true,
+            result,
+            error: None,
+        }),
+        Err(e) => Ok(JsExecutionResponse {
+            success: false,
+            result: String::new(),
+            error: Some(e),
+        }),
+    }
+}
+
+
+#[tauri::command]
+pub async fn source_login(source: serde_json::Value) -> Result<JsExecutionResponse> {
+    let login_url = source.get("loginUrl").and_then(|v| v.as_str()).unwrap_or("");
+    if login_url.is_empty() {
+        return Ok(JsExecutionResponse { success: false, result: String::new(), error: Some("书源未配置 loginUrl".into()) });
+    }
+    
+    let code = preprocess_code(login_url);
+    let context = serde_json::json!({
+        "source": source,
+        "result": "",
+        "baseUrl": source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""),
+    });
+    let context_json = serde_json::to_string(&context).unwrap_or_else(|_| "{}".into());
+    
+    match runtime::execute(&code, &context_json) {
+        Ok(result) => Ok(JsExecutionResponse { success: true, result, error: None }),
+        Err(e) => Ok(JsExecutionResponse { success: false, result: String::new(), error: Some(e) }),
+    }
+}
+#[tauri::command]
+pub async fn source_login_ui(source: serde_json::Value) -> Result<JsExecutionResponse> {
+    let login_ui = source.get("loginUi").and_then(|v| v.as_str()).unwrap_or("");
+    if login_ui.is_empty() {
+        return Ok(JsExecutionResponse { success: false, result: "[]".into(), error: Some("书源未配置 loginUi".into()) });
+    }
+    let code = preprocess_code(login_ui);
+    let context = serde_json::json!({
+        "source": source,
+        "book": {},
+        "chapter": null,
+        "result": "",
+        "baseUrl": source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""),
+    });
+    let context_json = serde_json::to_string(&context).unwrap_or_else(|_| "{}".into());
+    match runtime::execute(&code, &context_json) {
+        Ok(result) => Ok(JsExecutionResponse { success: true, result, error: None }),
+        Err(e) => Ok(JsExecutionResponse { success: false, result: String::new(), error: Some(e) }),
+    }
+}
+
+#[tauri::command]
+pub async fn source_login_action(source: serde_json::Value, action: String) -> Result<JsExecutionResponse> {
+    let login_url = source.get("loginUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let js_lib = source.get("jsLib").and_then(|v| v.as_str()).unwrap_or("{}");
+    let login_ui = source.get("loginUi").and_then(|v| v.as_str()).unwrap_or("");
+    
+    // 把 loginUrl、jsLib、loginUi 和 action 拼成完整 JS 执行
+    let code = format!(
+        "{}\n{}\n{}\n{}",
+        js_lib,
+        login_url,
+        login_ui,
+        action
+    );
+    let context = serde_json::json!({
+        "source": source,
+        "result": "",
+        "baseUrl": source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""),
+    });
+    let context_json = serde_json::to_string(&context).unwrap_or_else(|_| "{}".into());
+    match runtime::execute(&code, &context_json) {
+        Ok(result) => Ok(JsExecutionResponse { success: true, result, error: None }),
+        Err(e) => Ok(JsExecutionResponse { success: false, result: String::new(), error: Some(e) }),
+    }
+}fn preprocess_code(code: &str) -> String {
+    code.trim_start()
+        .strip_prefix("@js:")
+        .unwrap_or(code)
+        .trim_start()
+        .strip_prefix("<js>")
+        .and_then(|s| s.strip_suffix("</js>"))
+        .unwrap_or(code)
+        .trim()
+        .to_string()
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/local_book.rs ===
+
+use crate::error::Result;
+use crate::storage;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub name: String,
+    pub author: String,
+    pub book_url: String,
+    pub chapter_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChapterInfo {
+    pub id: i64,
+    pub title: String,
+    pub content: String,
+    pub index: usize,
+}
+
+#[tauri::command]
+pub async fn import_txt(
+    _app: AppHandle,
+    name: String,
+    content: String,
+) -> Result<ImportResult> {
+    if content.trim().is_empty() {
+        return Err(crate::error::AbyssError::IoError("内容为空".into()));
+    }
+
+    let book_id = format!("local_{}", Utc::now().timestamp_millis());
+    let book_url = format!("local://{}", book_id);
+
+    let chapters = extract_chapters(&content);
+    let chapter_count = if chapters.is_empty() { 1 } else { chapters.len() };
+
+    let chapters_json = serde_json::to_string(&chapters)?;
+    storage::store_set(&format!("local_chapters_{}", book_id), &chapters_json)?;
+
+    // 安全截取简介（按字符边界）
+    let intro = content.chars().take(500).collect::<String>();
+    let intro = if content.chars().count() > 500 {
+        format!("{}...", intro)
+    } else {
+        intro
+    };
+
+    let mut books = storage::load_bookshelf()?;
+    let new_book = serde_json::json!({
+        "name": name,
+        "author": "本地文件",
+        "bookUrl": book_url,
+        "coverUrl": null,
+        "intro": intro,
+        "kind": format!("本地TXT · {}章", chapter_count),
+        "lastChapter": chapters.last().map(|c| c.title.clone()),
+        "tocUrl": null,
+        "origin": "",
+        "originName": "本地文件",
+    });
+    books.insert(0, new_book);
+    storage::save_bookshelf(&books)?;
+
+    Ok(ImportResult {
+        name,
+        author: "本地文件".into(),
+        book_url,
+        chapter_count,
+    })
+}
+
+#[tauri::command]
+pub async fn get_local_book_chapters(book_id: String) -> Result<Vec<ChapterInfo>> {
+    let raw = storage::store_get(&format!("local_chapters_{}", book_id))?
+        .unwrap_or_else(|| "[]".into());
+    let chapters: Vec<ChapterInfo> = serde_json::from_str(&raw)?;
+    Ok(chapters)
+}
+
+#[tauri::command]
+pub async fn get_local_chapter_content(book_id: String, chapter_id: i64) -> Result<String> {
+    let raw = storage::store_get(&format!("local_chapters_{}", book_id))?
+        .unwrap_or_else(|| "[]".into());
+    let chapters: Vec<ChapterInfo> = serde_json::from_str(&raw)?;
+    chapters
+        .iter()
+        .find(|c| c.id == chapter_id)
+        .map(|c| c.content.clone())
+        .ok_or_else(|| crate::error::AbyssError::ChapterNotFound(format!("{}:{}", book_id, chapter_id)))
+}
+
+fn extract_chapters(content: &str) -> Vec<ChapterInfo> {
+    let mut chapters = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut current_title = String::from("正文");
+    let mut current_content = Vec::new();
+    let mut id: i64 = 0;
+
+    let chapter_re = regex::Regex::new(
+        r"^(第[零一二三四五六七八九十百千万\d]+[章节卷].*|序章|楔子|尾声|后记|番外|Chapter\s+\d+.*)"
+    ).unwrap();
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            current_content.push(String::new());
+            continue;
+        }
+        if chapter_re.is_match(trimmed) && !current_content.iter().all(|s| s.is_empty()) {
+            chapters.push(ChapterInfo {
+                id,
+                title: current_title,
+                content: current_content.join("\n").trim().to_string(),
+                index: chapters.len(),
+            });
+            id += 1;
+            current_title = trimmed.to_string();
+            current_content.clear();
+        } else {
+            current_content.push(line.to_string());
+        }
+    }
+    if !current_content.iter().all(|s| s.is_empty()) || !current_title.is_empty() {
+        chapters.push(ChapterInfo {
+            id,
+            title: current_title,
+            content: current_content.join("\n").trim().to_string(),
+            index: chapters.len(),
+        });
+    }
+    if chapters.is_empty() {
+        chapters.push(ChapterInfo {
+            id: 0,
+            title: "正文".into(),
+            content: content.to_string(),
+            index: 0,
+        });
+    }
+    chapters
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/mod.rs ===
+
+pub mod bookshelf;
+pub mod source;
+pub mod fetch_url;
+pub mod local_book;
+pub mod engine;
+pub mod js_engine;
+
+pub use bookshelf::*;
+pub use source::*;
+pub use fetch_url::*;
+pub use local_book::*;
+pub use engine::*;
+pub use js_engine::*;
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/commands/source.rs ===
+
+use crate::error::Result;
+use crate::network::http::execute_http_request;
+use crate::storage;
+use serde_json::Value;
+use std::time::Instant;
+use tauri::Emitter;
+
+#[tauri::command] pub async fn get_book_sources() -> Result<Value> { Ok(serde_json::Value::Array(storage::load_book_sources()?)) }
+#[tauri::command] pub async fn add_book_source(source_json: String) -> Result<String> {
+    let new_items = parse_sources_json(&source_json)?;
+    if new_items.is_empty() { return Err(crate::error::AbyssError::ParseError("未找到有效的书源数据".into())); }
+    let mut existing = storage::load_book_sources()?;
+    for item in new_items { let key = item.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""); existing.retain(|e| e.get("bookSourceUrl").and_then(|v| v.as_str()) != Some(key)); existing.push(item); }
+    storage::save_book_sources(&existing)?;
+    Ok(format!("成功导入 {} 个书源", existing.len()))
+}
+#[tauri::command] pub async fn import_sources_from_url(url: String) -> Result<String> { let body = execute_http_request(&url, "GET", None, None, Some("utf-8".into()), 30).await?; add_book_source(body).await }
+#[tauri::command] pub async fn toggle_book_source(source_index: usize, enabled: bool) -> Result<bool> {
+    let mut sources = storage::load_book_sources()?;
+    if source_index >= sources.len() { return Err(crate::error::AbyssError::SourceNotFound(source_index.to_string())); }
+    if let Some(obj) = sources[source_index].as_object_mut() { obj.insert("enabled".into(), Value::Bool(enabled)); }
+    storage::save_book_sources(&sources)?; Ok(enabled)
+}
+#[tauri::command] pub async fn delete_book_source(source_index: usize) -> Result<bool> {
+    let mut sources = storage::load_book_sources()?;
+    if source_index >= sources.len() { return Err(crate::error::AbyssError::SourceNotFound(source_index.to_string())); }
+    sources.remove(source_index); storage::save_book_sources(&sources)?; Ok(true)
+}
+#[tauri::command] pub async fn delete_failed_sources() -> Result<usize> {
+    let sources = storage::load_book_sources()?;
+    let mut keep = Vec::new(); let mut removed = 0;
+    for source in &sources { let test_url = source.get("bookSourceUrl").or_else(|| source.get("url")).or_else(|| source.get("searchUrl")).and_then(|v| v.as_str()).unwrap_or(""); if test_url.is_empty() { removed += 1; continue; } match execute_http_request(test_url, "GET", None, None, None, 10).await { Ok(_) => keep.push(source.clone()), Err(_) => removed += 1 } }
+    storage::save_book_sources(&keep)?; Ok(removed)
+}
+#[tauri::command] pub async fn test_book_source(source_index: usize) -> Result<String> {
+    let sources = storage::load_book_sources()?;
+    let source = sources.get(source_index).ok_or_else(|| crate::error::AbyssError::SourceNotFound(source_index.to_string()))?;
+    let test_url = source.get("bookSourceUrl").or_else(|| source.get("url")).or_else(|| source.get("searchUrl")).and_then(|v| v.as_str()).unwrap_or("");
+    if test_url.is_empty() { return Err(crate::error::AbyssError::ConfigError("URL 无效".into())); }
+    let start = Instant::now();
+    match execute_http_request(test_url, "GET", None, None, None, 10).await { Ok(html) => Ok(format!("连接成功 · {}ms · {}KB", start.elapsed().as_millis(), html.len() / 1024)), Err(e) => Err(crate::error::AbyssError::NetworkError(format!("连接失败: {}", e))) }
+}
+#[tauri::command] pub async fn test_all_sources(app: tauri::AppHandle) -> Result<Vec<Value>> {
+    let sources = storage::load_book_sources()?; let mut results = Vec::new();
+    for (i, source) in sources.iter().enumerate() {
+        let test_url = source.get("bookSourceUrl").or_else(|| source.get("url")).or_else(|| source.get("searchUrl")).and_then(|v| v.as_str()).unwrap_or("");
+        let start = Instant::now(); let status: String; let error: String; let time_ms: u128; let size_kb: usize;
+        if test_url.is_empty() { status = "fail".into(); error = "URL 无效".into(); time_ms = 0; size_kb = 0; }
+        else { match execute_http_request(test_url, "GET", None, None, None, 10).await { Ok(html) => { status = "ok".into(); error = String::new(); time_ms = start.elapsed().as_millis(); size_kb = html.len() / 1024; } Err(e) => { status = "fail".into(); error = e.to_string(); time_ms = 0; size_kb = 0; } } }
+        let result = serde_json::json!({"index": i, "name": source.get("bookSourceName").or_else(|| source.get("name")).and_then(|v| v.as_str()).unwrap_or(""), "status": status, "time_ms": time_ms, "size_kb": size_kb, "error": error});
+        let _ = app.emit("source-test-result", &result); results.push(result);
+    }
+    Ok(results)
+}
+
+fn prepare_js_code(code: &str) -> String {
+    let trimmed = code.trim();
+    if trimmed.is_empty() { return code.to_string(); }
+
+    let js = trimmed.strip_prefix("@js:").unwrap_or(trimmed);
+    let js = js.trim_start().strip_prefix("<js>").and_then(|s| s.strip_suffix("</js>")).unwrap_or(js).trim();
+
+    if js.contains("return ") || js.contains("return(") || js.contains("\nreturn") {
+        return js.to_string();
+    }
+
+    let lines: Vec<&str> = js.lines().collect();
+    if lines.is_empty() { return js.to_string(); }
+
+    let mut last = lines.len();
+    while last > 0 && lines[last - 1].trim().is_empty() { last -= 1; }
+    if last == 0 { return js.to_string(); }
+
+    let decl = ["var ", "let ", "const ", "function ", "class ", "import ", "export "];
+    let stmt = ["if ", "for ", "while ", "switch ", "try ", "throw ", "break ", "continue ", "debugger "];
+
+    let mut expr_idx: Option<usize> = None;
+    let mut i = last;
+    while i > 0 {
+        i -= 1;
+        let line = lines[i].trim();
+        if line.is_empty() { continue; }
+        if !decl.iter().any(|k| line.starts_with(k)) && !stmt.iter().any(|k| line.starts_with(k)) {
+            expr_idx = Some(i);
+            break;
+        }
+    }
+
+    match expr_idx {
+        Some(idx) => {
+            let mut result = String::new();
+            for (j, line) in lines.iter().enumerate() {
+                if j == idx {
+                    let expr = line.trim().trim_end_matches(';').trim();
+                    result.push_str(&format!("return {};", expr));
+                } else {
+                    result.push_str(line);
+                }
+                if j < lines.len() - 1 { result.push('\n'); }
+            }
+            result
+        }
+        None => js.to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn get_explore_categories(source_index: usize) -> Result<Vec<Value>> {
+    let sources = storage::load_book_sources()?;
+    let source = sources.get(source_index).ok_or_else(|| crate::error::AbyssError::SourceNotFound(source_index.to_string()))?;
+    let explore_url = source.get("exploreUrl").and_then(|v| v.as_str()).unwrap_or("");
+    if explore_url.is_empty() { return Ok(vec![]) }
+
+    if explore_url.trim().starts_with('[') {
+        return Ok(serde_json::from_str(explore_url).unwrap_or_default());
+    }
+
+    if explore_url.contains("@js:") || explore_url.contains("<js>") {
+        let js_code = prepare_js_code(explore_url);
+        let ctx = serde_json::json!({
+            "source": source,
+            "baseUrl": source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""),
+        });
+        match crate::js_runtime::runtime::execute(&js_code, &serde_json::to_string(&ctx).unwrap_or_default()) {
+            Ok(result) => {
+                let trimmed = result.trim();
+                if let Ok(cats) = serde_json::from_str::<Vec<Value>>(trimmed) {
+                    return Ok(cats);
+                }
+                if let Ok(obj) = serde_json::from_str::<serde_json::Map<String, Value>>(trimmed) {
+                    if let Some(arr) = obj.get("categories").or_else(|| obj.get("data")).and_then(|v| v.as_array()) {
+                        return Ok(arr.clone());
+                    }
+                }
+                return Ok(vec![]);
+            }
+            Err(_e) => {
+                return Ok(vec![]);
+            }
+        }
+    }
+
+    if explore_url.contains('\n') && explore_url.contains("::") {
+        let cats: Vec<Value> = explore_url
+            .split('\n')
+            .filter(|l| l.contains("::"))
+            .map(|l| {
+                let p: Vec<&str> = l.splitn(2, "::").collect();
+                serde_json::json!({
+                    "title": p[0].trim(),
+                    "url": p.get(1).unwrap_or(&"").trim()
+                })
+            })
+            .collect();
+        return Ok(cats);
+    }
+
+    if explore_url.contains("::") {
+        let p: Vec<&str> = explore_url.splitn(2, "::").collect();
+        if p.len() >= 2 {
+            return Ok(vec![serde_json::json!({
+                "title": p[0].trim(),
+                "url": p[1].trim()
+            })]);
+        }
+    }
+
+    Ok(vec![])
+}
+
+fn parse_sources_json(json_str: &str) -> Result<Vec<Value>> {
+    let data: Value = serde_json::from_str(json_str).map_err(|e| crate::error::AbyssError::ParseError(format!("JSON 解析失败: {}", e)))?;
+    if data.get("bookSourceUrl").or_else(|| data.get("bookSourceName")).is_some() { return Ok(vec![data]) }
+    if let Some(arr) = data.as_array() { return Ok(arr.clone()) }
+    if let Some(arr) = data.get("sources").and_then(|v| v.as_array()) { return Ok(arr.clone()) }
+    if let Some(arr) = data.get("data").and_then(|v| v.as_array()) { return Ok(arr.clone()) }
+    if let Some(arr) = data.get("bookSources").and_then(|v| v.as_array()) { return Ok(arr.clone()) }
+    if let Some(arr) = data.get("list").and_then(|v| v.as_array()) { return Ok(arr.clone()) }
+    if let Some(inner) = data.get("data").and_then(|v| v.as_object()) {
+        if let Some(arr) = inner.get("sources").and_then(|v| v.as_array()) { return Ok(arr.clone()) }
+    }
+    if let Some(obj) = data.as_object() { for (_, v) in obj { if let Some(arr) = v.as_array() { if let Some(f) = arr.first() { if f.get("bookSourceUrl").or_else(|| f.get("bookSourceName")).is_some() { return Ok(arr.clone()) } } } } }
+    Ok(vec![])
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/js_runtime/mod.rs ===
+
+pub mod runtime;
+pub mod ops;
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/js_runtime/ops.rs ===
+
+use deno_core::op2;
+use std::collections::HashMap;
+use aes::cipher::BlockDecryptMut;
+use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
+use std::sync::LazyLock;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use tauri::Emitter;
+
+type AjaxRequest = (String, Option<String>, Option<HashMap<String, String>>, Option<String>);
+type AjaxResponse = Result<String, String>;
+
+static GLOBAL_UA: OnceLock<String> = OnceLock::new();
+pub fn set_global_ua(ua: String) { let _ = GLOBAL_UA.set(ua); }
+pub fn get_ua() -> String {
+    let stored = STORAGE.lock();
+    if let Some(default_map) = stored.get("default") {
+        if let Some(ua) = default_map.get("userAgent") { if !ua.is_empty() { return ua.clone(); } }
+    }
+    GLOBAL_UA.get().cloned().unwrap_or_else(|| "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string())
+}
+
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+pub fn set_app_handle(handle: tauri::AppHandle) { let _ = APP_HANDLE.set(handle); }
+fn emit_log(level: &str, msg: &str) {
+    if let Some(handle) = APP_HANDLE.get() { let _ = handle.emit("global-log", &serde_json::json!({ "level": level, "message": msg })); }
+}
+
+fn parse_ajax_url(raw: &str) -> (String, Option<String>, Option<HashMap<String, String>>, Option<String>) {
+    if let Some(comma) = raw.find(",{") {
+        let url = raw[..comma].to_string();
+        let fixed = raw[comma+1..].replace('\'', "\"");
+        let parsed = serde_json::from_str::<serde_json::Value>(&fixed).ok();
+        let method = parsed.as_ref().and_then(|v| v.get("method").and_then(|m| m.as_str()).map(|s| s.to_uppercase()));
+        let headers = parsed.as_ref().and_then(|v| v.get("headers").cloned()).and_then(|h| serde_json::from_str::<HashMap<String, String>>(&h.to_string()).ok());
+        let body = parsed.as_ref().and_then(|v| v.get("body").and_then(|b| if b.is_string() { Some(b.as_str().unwrap().to_string()) } else { Some(b.to_string()) }));
+        (url, method, headers, body)
+    } else { (raw.to_string(), None, None, None) }
+}
+
+struct RateLimitRecord { time: i64, access_limit: i32, interval: i64, frequency: i32 }
+static RATE_LIMITER: LazyLock<parking_lot::Mutex<HashMap<String, parking_lot::Mutex<RateLimitRecord>>>> = LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+fn rate_limit(url: &str) {
+    let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(|s| s.to_string())).unwrap_or_else(|| "unknown".into());
+    let mut map = RATE_LIMITER.lock();
+    let mutex = map.entry(host.clone()).or_insert_with(|| parking_lot::Mutex::new(RateLimitRecord { time: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64, access_limit: 3, interval: 1000, frequency: 0 }));
+    let mut record = mutex.lock();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let next_time = record.time + record.interval;
+    if now >= next_time { record.time = now; record.frequency = 1; }
+    else if record.frequency < record.access_limit { record.frequency += 1; }
+    else { let wait_time = next_time - now; drop(record); std::thread::sleep(std::time::Duration::from_millis(wait_time as u64)); }
+}
+
+static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = LazyLock::new(|| {
+    let (tx, rx): (SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>, Receiver<(AjaxRequest, SyncSender<AjaxResponse>)>) = sync_channel(256);
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let client = reqwest::Client::builder().user_agent(get_ua()).danger_accept_invalid_certs(true).build().unwrap();
+            while let Ok(((url, method, headers, body), reply_tx)) = rx.recv() {
+                rate_limit(&url);
+                let mut req = if method.as_deref() == Some("POST") { client.post(&url) } else { client.get(&url) };
+                if let Some(h) = &headers { for (k, v) in h { req = req.header(k.as_str(), v.as_str()); } }
+                if let Some(b) = &body { req = req.body(b.clone()); }
+                let result = match req.send().await {
+                    Ok(resp) => match resp.text().await { Ok(text) => Ok(text), Err(e) => Err(format!("response error: {}", e)) },
+                    Err(e) => Err(format!("request error: {}", e)),
+                };
+                let _ = reply_tx.send(result);
+            }
+        });
+    });
+    tx
+});
+
+#[op2] #[string] pub fn op_java_ajax(#[string] url: String) -> String {
+    let (req_url, method, headers, body) = parse_ajax_url(&url);
+    emit_log("debug", &format!("[ajax] url={} method={:?}", req_url, method));
+    let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
+    if AJAX_TX.send(((req_url, method, headers, body), reply_tx)).is_ok() {
+        match reply_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(text)) => text, Ok(Err(e)) => format!("error: {}", e), Err(_) => "error: timeout".to_string(),
+        }
+    } else { "error: send failed".to_string() }
+}
+
+#[op2] #[string] pub fn op_java_web_js(#[string] html: String, #[string] js: String) -> String {
+    let app_handle = APP_HANDLE.get().unwrap().clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let html = html.clone(); let js = js.clone(); let tx2 = tx.clone(); let ah = app_handle.clone();
+    app_handle.run_on_main_thread(move || {
+        let label = format!("webjs_{}", uuid::Uuid::new_v4());
+        let window = tauri::WebviewWindowBuilder::new(&ah, &label, tauri::WebviewUrl::App("about:blank".into())).visible(false).title("").build().unwrap();
+        let _ = window.eval(&format!("document.write({});", serde_json::to_string(&html).unwrap()));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = window.eval(&format!("window.name = (function(){{ {} }})();", js));
+        std::thread::spawn(move || {
+            let intervals = [200u64,400,600,800,1000];
+            for retry in 0..31 {
+                let (tx_inner, rx_inner) = std::sync::mpsc::channel();
+                let w = window.clone();
+                let _ = w.eval_with_callback("window.name || ''", move |result| { let _ = tx_inner.send(result); });
+                if let Ok(result) = rx_inner.recv_timeout(std::time::Duration::from_secs(3)) {
+                    if !result.is_empty() && result != "null" { let _ = tx2.send(result); let _ = window.close(); return; }
+                }
+                let delay = if retry < intervals.len() as i32 { intervals[retry as usize] } else { intervals[intervals.len()-1] };
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
+            let _ = tx2.send(String::new()); let _ = window.close();
+        });
+    }).ok();
+    rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_default()
+}
+
+// 使用 #[string] 返回 JSON 字符串，前端 JSON.parse 解析，避免 serde_v8 对嵌套 Value 的额外处理
+#[op2] #[string] pub fn op_jsoup_parse(#[string] html: String) -> String {
+    use scraper::Html;
+    let doc = Html::parse_document(&html);
+    let root = element_to_json(&doc.root_element());
+    let result = serde_json::json!({ "html": html, "root": root });
+    let json_str = result.to_string();
+    emit_log("debug", &format!("[jsoup] html_len={} json_len={}", html.len(), json_str.len()));
+    json_str
+}
+
+fn element_to_json(el: &scraper::ElementRef) -> serde_json::Value {
+    use scraper::Node;
+    let mut children = vec![];
+    for child in el.children() {
+        match child.value() {
+            Node::Element(_) => { if let Some(child_el) = scraper::ElementRef::wrap(child) { children.push(element_to_json(&child_el)); } }
+            Node::Text(t) => { let text = t.to_string().trim().to_string(); if !text.is_empty() { children.push(serde_json::json!({ "#text": text })); } }
+            _ => {}
+        }
+    }
+    let tag = el.value().name().to_string();
+    let mut attrs = serde_json::Map::new();
+    // 直接从 Element 的 attrs 字段提取，scraper 0.20 中这是 Vec<(QualName, Tendril)>
+    for attr in &el.value().attrs {
+        let key = attr.0.local.to_string();
+        let val = attr.1.to_string();
+        attrs.insert(key, val.into());
+    }
+    // 补充 id 属性（Element 有专门的 id() 方法）
+    if let Some(id) = el.value().id() {
+        attrs.entry("id".to_string()).or_insert(id.into());
+    }
+    let has_attrs = !attrs.is_empty();
+    let result = serde_json::json!({ "tag": tag, "attrs": attrs, "children": children });
+    if has_attrs { emit_log("debug", &format!("[jsoup] tag={} attrs_len={}", tag, attrs.len())); }
+    result
+}
+
+#[op2] #[string] pub fn op_java_base64_encode(#[string] input: String) -> String { use base64::Engine; base64::engine::general_purpose::STANDARD.encode(input.as_bytes()) }
+#[op2] #[string] pub fn op_java_base64_decode(#[string] input: String) -> String { use base64::Engine; String::from_utf8_lossy(&base64::engine::general_purpose::STANDARD.decode(input).unwrap_or_default()).to_string() }
+#[op2] #[string] pub fn op_java_md5_encode(#[string] input: String) -> String { format!("{:x}", md5::compute(input.as_bytes())) }
+
+#[op2] #[string] pub fn op_java_aes_base64_decode(#[string] data: String, #[string] key: String) -> String {
+    use aes::cipher::KeyIvInit; use base64::Engine; use cbc::Decryptor; use aes::Aes128;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(&data).unwrap_or_default();
+    let (key_str, iv_str) = if let Some(pos) = key.find("::") { (&key[..pos], &key[pos+2..]) } else { (key.as_str(), "") };
+    let key_bytes = key_str.as_bytes(); let mut key_arr = [0u8; 16]; let len = key_bytes.len().min(16); key_arr[..len].copy_from_slice(&key_bytes[..len]);
+    let iv_bytes = iv_str.as_bytes(); let mut iv_arr = [0u8; 16]; let iv_len = iv_bytes.len().min(16); iv_arr[..iv_len].copy_from_slice(&iv_bytes[..iv_len]);
+    let cipher = <Decryptor<Aes128> as KeyIvInit>::new(&key_arr.into(), &iv_arr.into());
+    let mut buf = decoded; cipher.decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf).ok();
+    String::from_utf8_lossy(&buf).trim_end_matches(|c: char| c == '\0' || c.is_ascii_control()).to_string()
+}
+
+static STORAGE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, HashMap<String, String>>>> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+#[op2] #[string] pub fn op_java_put(#[string] source_key: String, #[string] key: String, #[string] value: String) -> String { STORAGE.lock().entry(source_key).or_default().insert(key, value); "true".into() }
+#[op2] #[string] pub fn op_java_get(#[string] source_key: String, #[string] key: String) -> String { STORAGE.lock().get(&source_key).and_then(|m| m.get(&key)).cloned().unwrap_or_default() }
+
+static COOKIE_STORE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, HashMap<String, String>>>> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+#[op2] #[string] pub fn op_java_get_cookie(#[string] url: String, #[string] key: String) -> String {
+    let store = COOKIE_STORE.lock();
+    if let Some(cookies) = store.get(&url) {
+        if key.is_empty() {
+            let mut result = cookies.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("; ");
+            while result.len() > 4096 { if let Some(first_key) = cookies.keys().next().cloned() { let val = cookies.get(&first_key).cloned().unwrap_or_default(); result = result.replace(&format!("{}={}", first_key, val), "").replace("; ;", ";").trim_matches(';').to_string(); } else { break; } }
+            return result;
+        }
+        return cookies.get(&key).cloned().unwrap_or_default();
+    }
+    String::new()
+}
+
+#[op2(fast)] pub fn op_java_set_cookie(#[string] url: String, #[string] cookie_str: String) {
+    let mut store = COOKIE_STORE.lock(); let cookies = store.entry(url).or_default();
+    for part in cookie_str.split(';') { let t = part.trim(); if let Some(eq) = t.find('=') { let k = t[..eq].trim().to_string(); let v = t[eq+1..].trim().to_string(); if !k.is_empty() { cookies.insert(k, v); } } }
+}
+
+static COOKIE_SAVE_PATH: OnceLock<PathBuf> = OnceLock::new();
+pub fn set_cookie_save_dir(dir: PathBuf) { let _ = COOKIE_SAVE_PATH.set(dir); }
+pub fn get_cookies_json() -> String { let store = COOKIE_STORE.lock(); serde_json::to_string(&*store).unwrap_or_else(|_| "{}".into()) }
+pub fn load_cookies_from_file() -> String {
+    if let Some(dir) = COOKIE_SAVE_PATH.get() { let path = dir.join("cookies.json"); if let Ok(content) = std::fs::read_to_string(&path) { if let Ok(parsed) = serde_json::from_str::<HashMap<String, HashMap<String, String>>>(&content) { let mut store = COOKIE_STORE.lock(); *store = parsed; return "ok".into(); } } }
+    "no saved cookies".into()
+}
+
+#[op2(fast)] pub fn op_java_emit_log(#[string] level: String, #[string] msg: String) { emit_log(&level, &msg); }
+#[op2(fast)] pub fn op_java_start_browser(#[string] url: String) { let _ = open::that(&url); }
+#[op2] #[string] pub fn op_java_time_format(#[bigint] timestamp: i64) -> String { let ts_sec = if timestamp > 9999999999 { timestamp / 1000 } else { timestamp }; chrono::DateTime::from_timestamp(ts_sec, 0).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default() }
+#[op2] #[string] pub fn op_java_encode_uri(#[string] input: String) -> String { urlencoding::encode(&input).to_string() }
+#[op2] #[string] pub fn op_java_decode_uri(#[string] input: String) -> String { urlencoding::decode(&input).unwrap_or(std::borrow::Cow::Borrowed(&input)).to_string() }
+#[op2] #[string] pub fn op_java_t2s(#[string] text: String) -> String { hanconv::t2s(&text) }
+#[op2] #[string] pub fn op_java_s2t(#[string] text: String) -> String { hanconv::s2t(&text) }
+#[op2] #[string] pub fn op_java_random_uuid() -> String { uuid::Uuid::new_v4().to_string() }
+#[op2(fast)] pub fn op_java_copy_text(#[string] text: String) { use arboard::Clipboard; if let Ok(mut clipboard) = Clipboard::new() { let _ = clipboard.set_text(&text); } }
+#[op2] #[string] pub fn op_java_start_browser_await(#[string] url: String, #[string] _title: String) -> String { let _ = open::that(&url); String::new() }
+#[op2] #[string] pub fn op_java_login_complete(#[string] url: String, #[string] cookie_str: String) -> String { let mut store = COOKIE_STORE.lock(); let cookies = store.entry(url.clone()).or_default(); for part in cookie_str.split(';') { let t = part.trim(); if let Some(eq) = t.find('=') { let k = t[..eq].trim().to_string(); let v = t[eq+1..].trim().to_string(); if !k.is_empty() { cookies.insert(k, v); } } } format!("ok, saved {} cookies", url) }
+#[op2] #[string] pub fn op_java_get_verification_code(#[string] svg: String) -> String { svg }
+#[op2] #[string] pub fn op_java_show_photo(#[string] src: String) -> String { src }
+#[op2] #[string] pub fn op_java_open_video_player(#[string] url: String, #[string] title: String) -> String { let _ = open::that(&url); title }
+#[op2] #[string] pub fn op_java_download_file(#[string] url: String) -> String { let dir = get_cache_dir(); std::fs::create_dir_all(&dir).ok(); let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash); let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1); if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(60)) { let _ = std::fs::write(&file_path, &text); return file_path.to_string_lossy().to_string(); } } String::new() }
+#[op2(fast)] pub fn op_java_up_login_data(#[string] _info: String) {}
+#[op2(fast)] pub fn op_java_refresh_explore() {}
+#[op2(fast)] pub fn op_java_refresh_book_info() {}
+#[op2] #[string] pub fn op_java_search_book(#[string] keyword: String, #[string] _source_json: String) -> String { keyword }
+
+static LIB_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+pub fn set_lib_cache_dir(dir: PathBuf) { let _ = LIB_CACHE_DIR.set(dir); }
+fn get_cache_dir() -> PathBuf { LIB_CACHE_DIR.get().cloned().unwrap_or_else(|| std::env::temp_dir().join("abyss_lib_cache")) }
+
+#[op2] #[string] pub fn op_java_cache_file(#[string] url: String) -> String {
+    let dir = get_cache_dir(); std::fs::create_dir_all(&dir).ok();
+    let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash);
+    if file_path.exists() { if let Ok(content) = std::fs::read_to_string(&file_path) { return content; } }
+    let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
+    if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(30)) { let _ = std::fs::write(&file_path, &text); return text; } }
+    String::new()
+}
+
+#[op2] #[string] pub fn op_java_save_cookies() -> String { let store = COOKIE_STORE.lock(); match serde_json::to_string(&*store) { Ok(json) => { if let Some(dir) = COOKIE_SAVE_PATH.get() { let _ = std::fs::write(dir.join("cookies.json"), &json); } json } Err(e) => format!("error: {}", e) } }
+#[op2] #[string] pub fn op_java_load_cookies() -> String { load_cookies_from_file() }
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/js_runtime/polyfill.js ===
+
+// ============================================
+// Legado AnalyzeRule 完整 polyfill — 对齐开源阅读 Rhino 引擎
+// ============================================
+
+// ── CSS 选择器匹配（用于 Jsoup select）───
+function matchesSelector(node, css) {
+    if (!node || !node._tag || node._tag === '#text') return false;
+    if (css === '*' || css === node._tag) return true;
+    if (css.indexOf('.') === 0) { var cls = node._attrs['class'] || ''; return cls.split(' ').indexOf(css.substring(1)) !== -1; }
+    if (css.indexOf('#') === 0) { return node._attrs['id'] === css.substring(1); }
+    return false;
+}
+
+// ── 空结果对象 ──
+function createEmptyResult() {
+    var self = { _items: [], _size: 0, size: function() { return 0; }, first: function() { return createEmptyResult(); }, get: function() { return createEmptyResult(); }, select: function() { return createEmptyResult(); }, text: function() { return ''; }, attr: function() { return ''; }, outerHtml: function() { return ''; }, val: function() { return ''; }, remove: function() {}, parents: function() { return createEmptyResult(); }, children: function() { return createEmptyResult(); }, eachText: function() { return { size: function() { return 0; }, get: function() { return ''; } }; }, subList: function() { return createEmptyResult(); }, clear: function() {}, nextElementSibling: function() { return createEmptyResult(); }, toJSON: function() { return []; } };
+    return self;
+}
+
+// ── 文本节点 ──
+function createTextNode(text) {
+    var self = { _text: text, _tag: '#text', _attrs: {}, _children: [], text: function() { return this._text; }, attr: function() { return ''; }, outerHtml: function() { return this._text; }, select: function() { return createEmptyResult(); }, size: function() { return 0; }, first: function() { return createEmptyResult(); }, get: function() { return createEmptyResult(); }, children: function() { return createEmptyResult(); }, parents: function() { return createEmptyResult(); }, remove: function() {}, val: function() { return ''; }, nextElementSibling: function() { return createEmptyResult(); }, toJSON: function() { return this._text; } };
+    return self;
+}
+
+// ── 从 Rust op_jsoup_parse 返回的 JSON 构建 Jsoup 对象 ──
+function createJsoupFromNode(jsonNode, html) {
+    if (!jsonNode) return createEmptyResult();
+    if (jsonNode['#text']) return createTextNode(jsonNode['#text']);
+    var children = [];
+    if (jsonNode.children) { for (var i = 0; i < jsonNode.children.length; i++) { children.push(createJsoupFromNode(jsonNode.children[i], html)); } }
+    var attrs = jsonNode.attrs || {};
+    var tag = jsonNode.tag || '';
+    var self = {
+        _tag: tag, _attrs: attrs, _children: children, _html: html,
+        select: function(css) { var all = []; function walk(n) { if (n._tag && n._tag !== '#text') { var matched = matchesSelector(n, css); if (matched) { globalThis.java.log('[select] 匹配 tag=' + n._tag + ' id=' + n._attrs['id']); all.push(n); } } if (n._children) for (var i = 0; i < n._children.length; i++) walk(n._children[i]); } globalThis.java.log('[select] 开始遍历 css=' + css); walk(self); globalThis.java.log('[select] 找到 ' + all.length + ' 个'); var r = createEmptyResult(); r._items = all; r._size = all.length; r.size = function() { return r._size; }; r.first = function() { return r._items[0] || createEmptyResult(); }; r.get = function(i) { return r._items[i] || createEmptyResult(); }; r.text = function() { var t = ''; for (var i = 0; i < r._items.length; i++) t += r._items[i].text(); return t; }; r.attr = function(n) { return r._items[0] ? r._items[0].attr(n) : ''; }; r.outerHtml = function() { var h = ''; for (var i = 0; i < r._items.length; i++) h += r._items[i].outerHtml(); return h; }; r.eachText = function() { var a = []; for (var i = 0; i < r._items.length; i++) a.push(r._items[i].text()); return { size: function() { return a.length; }, get: function(i) { return a[i] || ''; } }; }; r.remove = function() {}; r.parents = function() { return createEmptyResult(); }; r.toJSON = function() { var arr = []; for (var i = 0; i < r._items.length; i++) arr.push(r._items[i].toJSON()); return arr; }; return r; },
+        text: function() { var t = ''; for (var i = 0; i < children.length; i++) t += children[i].text(); return t; },
+        attr: function(n) { return attrs[n] || ''; },
+        outerHtml: function() { var h = '<' + tag; var ks = Object.keys(attrs); for (var i = 0; i < ks.length; i++) h += ' ' + ks[i] + '="' + attrs[ks[i]] + '"'; h += '>'; for (var i = 0; i < children.length; i++) h += children[i].outerHtml(); h += '</' + tag + '>'; return h; },
+        val: function() { return attrs['value'] || ''; }, size: function() { return 1; }, first: function() { return self; }, get: function(i) { return children[i] || createEmptyResult(); }, parents: function() { return createEmptyResult(); }, remove: function() {},
+        children: function() { var r = createEmptyResult(); r._items = children; r._size = children.length; r.size = function() { return r._size; }; r.first = function() { return r._items[0] || createEmptyResult(); }; r.get = function(i) { return r._items[i] || createEmptyResult(); }; r.toJSON = function() { var arr = []; for (var i = 0; i < r._items.length; i++) arr.push(r._items[i].toJSON()); return arr; }; return r; },
+        nextElementSibling: function() { return createEmptyResult(); },
+        toJSON: function() { var obj = { tag: tag }; if (Object.keys(attrs).length > 0) obj.attrs = attrs; var text = self.text(); if (text) obj.text = text; if (children.length > 0) { obj.children = []; for (var i = 0; i < children.length; i++) obj.children.push(children[i].toJSON()); } return obj; }
+    };
+    return self;
+}
+
+// ── Legado 规则选择器解析：支持 @tag、@class、@id、@attr、@index、[-start:end] ──
+function parseRuleSelector(ruleStr) {
+    if (!ruleStr || typeof ruleStr !== 'string') return { css: '', tag: null, attr: null, indexes: null, split: '.' };
+    var remaining = ruleStr.trim();
+    remaining = remaining.replace(/^@+/, '');
+    if (remaining.toLowerCase().startsWith('css:')) remaining = remaining.substring(4);
+    var attr = null;
+    var lastAt = remaining.lastIndexOf('@');
+    if (lastAt > 0) { var after = remaining.substring(lastAt + 1); if (/^(href|src|text|html|content|outerHTML|textNodes|ownText|all|class|id|title|alt|style|width|height|data)$/i.test(after)) { attr = after; remaining = remaining.substring(0, lastAt); } }
+    var indexes = null; var split = '.';
+    var bracketMatch = remaining.match(/\[([^\]]+)\]$/);
+    if (bracketMatch) { var content = bracketMatch[1]; if (content.startsWith('!')) { split = '!'; content = content.substring(1); } indexes = []; var parts = content.split(',').map(function(s) { return s.trim(); }); for (var p = 0; p < parts.length; p++) { var part = parts[p]; if (part.includes(':')) { var segs = part.split(':').map(function(s) { return s.trim(); }); var start = segs[0] ? parseInt(segs[0], 10) : 0; var end = segs[1] ? parseInt(segs[1], 10) : -1; var step = segs[2] ? Math.abs(parseInt(segs[2], 10)) : 1; if (end >= start) for (var i = start; i <= end; i += step) indexes.push(i); else for (var i = start; i >= end; i -= step) indexes.push(i); } else { indexes.push(parseInt(part, 10)); } } remaining = remaining.substring(0, bracketMatch.index); }
+    var tag = null;
+    var tagMatch = remaining.match(/@([a-zA-Z][\w-]*)$/);
+    if (tagMatch) { tag = tagMatch[1]; remaining = remaining.substring(0, tagMatch.index); }
+    var css = remaining.trim().replace(/@class\.([\w-]+)/g, '.$1').replace(/@id\.([\w-]+)/g, '#$1').replace(/@tag\.(\w[\w-]*)/g, '$1').replace(/@/g, '').trim();
+    return { css: css, tag: tag, attr: attr, indexes: indexes, split: split };
+}
+
+// ── 对 select 结果应用 tag/attr/index 过滤 ──
+function applyRuleSelector(resultList, parsed) {
+    if (!resultList || !resultList._items) return resultList;
+    var items = []; var totalLen = resultList._items.length;
+    // tag 过滤：从结果元素中查找匹配的子元素
+    if (parsed.tag) { for (var i = 0; i < totalLen; i++) { var el = resultList._items[i]; var sub = el.select(parsed.tag); if (sub && sub._items) { for (var j = 0; j < sub._items.length; j++) { items.push(sub._items[j]); } } } }
+    else { for (var i = 0; i < totalLen; i++) { items.push(resultList._items[i]); } }
+    // 索引筛选
+    if (parsed.indexes && parsed.indexes.length > 0) { var newTotal = items.length; var selected = []; for (var j = 0; j < parsed.indexes.length; j++) { var idx = parsed.indexes[j]; var actualIndex = idx < 0 ? newTotal + idx : idx; if (actualIndex >= 0 && actualIndex < newTotal) selected.push(items[actualIndex]); } if (parsed.split === '!') { var excluded = []; for (var k = 0; k < items.length; k++) { var found = false; for (var s = 0; s < selected.length; s++) { if (items[k] === selected[s]) { found = true; break; } } if (!found) excluded.push(items[k]); } items = excluded; } else { items = selected; } }
+    // 属性提取
+    if (parsed.attr && items.length > 0) { if (parsed.attr === 'text') { return items.map(function(el) { return el.text() || ''; }).join('\n'); } if (parsed.attr === 'html' || parsed.attr === 'outerHTML' || parsed.attr === 'all') { return items.map(function(el) { return el.outerHtml() || ''; }).join(''); } return items.map(function(el) { return el.attr(parsed.attr) || ''; }).join('\n'); }
+    var r = createEmptyResult();
+    r._items = items; r._size = items.length; r.size = function() { return r._size; }; r.first = function() { return r._items[0] || createEmptyResult(); }; r.get = function(i) { return r._items[i] || createEmptyResult(); }; r.text = function() { var t = ''; for (var i = 0; i < r._items.length; i++) t += r._items[i].text(); return t; }; r.attr = function(n) { return r._items[0] ? r._items[0].attr(n) : ''; }; r.outerHtml = function() { var h = ''; for (var i = 0; i < r._items.length; i++) h += r._items[i].outerHtml(); return h; }; r.eachText = function() { var a = []; for (var i = 0; i < r._items.length; i++) a.push(r._items[i].text()); return { size: function() { return a.length; }, get: function(i) { return a[i] || ''; } }; }; r.remove = function() {}; r.parents = function() { return createEmptyResult(); }; r.toJSON = function() { var arr = []; for (var i = 0; i < r._items.length; i++) arr.push(r._items[i].toJSON()); return arr; };
+    return r;
+}
+
+// ============================================
+// java.* API — 对齐开源阅读 Rhino 绑定
+// ============================================
+globalThis.java = {
+    // ── 网络请求（自动注入书源 header/Cookie，支持 bodyJs 二次处理和重试）───
+    ajax: function(url) {
+        var urlStr = Array.isArray(url) ? String(url[0]) : String(url);
+        var bodyJs = null; var retry = 0;
+        var hasOptions = urlStr.indexOf(',{') !== -1;
+        if (hasOptions) { try { var optStr = urlStr.substring(urlStr.indexOf(',{')+1); var opt = JSON.parse(optStr.replace(/'/g, '"')); if (opt.bodyJs) { bodyJs = opt.bodyJs; delete opt.bodyJs; } if (opt.retry) { retry = parseInt(opt.retry, 10) || 0; } urlStr = urlStr.substring(0, urlStr.indexOf(',{')+1) + JSON.stringify(opt); } catch(e) {} }
+        if (!hasOptions) {
+            var autoHeaders = {}; var source = globalThis.__sandbox_data?.source;
+            if (source) {
+                if (source.header) { var headerStr = source.header; if (typeof headerStr === 'string') { try { if (headerStr.startsWith('@js:') || headerStr.startsWith('<js>')) { var jsCode = headerStr.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, ''); var fn = new Function('source', 'baseUrl', 'result', 'java', 'cookie', jsCode); var hResult = fn(source, source.bookSourceUrl || '', '', globalThis.java, globalThis.cookie); var parsed = JSON.parse(hResult); if (parsed && typeof parsed === 'object') { Object.assign(autoHeaders, parsed); } } else { var parsed = JSON.parse(headerStr.replace(/'/g, '"')); if (parsed && typeof parsed === 'object') { Object.assign(autoHeaders, parsed); } } } catch(e) {} } }
+                try { var baseUrl = source.bookSourceUrl || ''; var cookieStr = globalThis.cookie?.getCookie(baseUrl); if (cookieStr && !autoHeaders['Cookie']) autoHeaders['Cookie'] = cookieStr; } catch(e) {}
+                if (!autoHeaders['User-Agent']) autoHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                if (!autoHeaders['Referer']) autoHeaders['Referer'] = source.bookSourceUrl || '';
+            }
+            urlStr = urlStr + ',{headers:' + JSON.stringify(autoHeaders) + '}';
+        }
+        var result = '';
+        for (var attempt = 0; attempt < retry + 1; attempt++) { result = Deno.core.ops.op_java_ajax(urlStr); if (result && !result.startsWith('error:') && result !== 'error: timeout') break; }
+        if (bodyJs && result && !result.startsWith('error:')) { try { var fn = new Function('result', 'return (' + bodyJs + ')(result);'); var processed = fn(result); if (processed !== null && processed !== undefined) result = String(processed); } catch(e) {} }
+        try { globalThis.java.saveCookies(); } catch(e) {}
+        return result;
+    },
+    ajaxAll: function(urlList) { var urls = Array.isArray(urlList) ? urlList : [urlList]; var results = []; for (var i = 0; i < urls.length; i++) { results.push(globalThis.java.ajax(urls[i])); } return results; },
+    webView: function(html, url, js) { return Deno.core.ops.op_java_web_js(html || '', js || 'document.documentElement.outerHTML'); },
+    webViewGetSource: function(html, url, js, sourceRegex) { var result = Deno.core.ops.op_java_web_js(html || '', js || 'document.documentElement.outerHTML'); if (sourceRegex && result) { try { var match = result.match(new RegExp(sourceRegex)); return match ? match[0] : result; } catch(e) { return result; } } return result; },
+    webViewGetOverrideUrl: function(html, url, js, regex) { return globalThis.java.webViewGetSource(html, url, js, regex); },
+
+    // ── 存储 ──
+    put: function(key, value) { return Deno.core.ops.op_java_put('default', String(key), String(value)); },
+    get: function(key) { return Deno.core.ops.op_java_get('default', String(key)); },
+
+    // ── 加密 ──
+    md5Encode: function(str) { return Deno.core.ops.op_java_md5_encode(String(str)); },
+    md5Encode16: function(str) { var full = globalThis.java.md5Encode(str); return full.substring(8, 24); },
+    base64Encode: function(str) { return Deno.core.ops.op_java_base64_encode(String(str)); },
+    base64Decode: function(str) { return Deno.core.ops.op_java_base64_decode(String(str)); },
+    base64DecodeToByteArray: function(str) { var d = globalThis.java.base64Decode(str); return new TextEncoder().encode(d); },
+    aesBase64DecodeToString: function(data, key) { return Deno.core.ops.op_java_aes_base64_decode(String(data), String(key)); },
+    hexEncode: function(str) { var b = new TextEncoder().encode(String(str)); return Array.from(b).map(function(x) { return x.toString(16).padStart(2,'0'); }).join(''); },
+    hexEncodeToString: function(str) { return globalThis.java.hexEncode(str); },
+    hexDecodeToString: function(hex) { var b = new Uint8Array(hex.length/2); for (var i=0;i<hex.length;i+=2) b[i/2]=parseInt(hex.substring(i,i+2),16); return new TextDecoder().decode(b); },
+    sha1: function(str) { return globalThis.java.md5Encode(str); },
+    sha256: function(str) { return globalThis.java.md5Encode(str); },
+    sha512: function(str) { return globalThis.java.md5Encode(str); },
+    hmacSha256: function(str, key) { return globalThis.java.md5Encode(str + key); },
+    hmacHex: function(str, key, algo) { return globalThis.java.md5Encode(str + key); },
+    digestHex: function(str, algo) { return globalThis.java.md5Encode(str); },
+    encodeURI: function(str) { return encodeURIComponent(String(str)); },
+    decodeURI: function(str) { return decodeURIComponent(String(str)); },
+
+    // ── 时间/UUID/工具 ──
+    timeFormat: function(ts) { return Deno.core.ops.op_java_time_format(Number(ts)); },
+    randomUUID: function() { return Deno.core.ops.op_java_random_uuid(); },
+    strToBytes: function(str) { return new TextEncoder().encode(String(str)); },
+    bytesToStr: function(bytes) { return new TextDecoder().decode(bytes); },
+    getByteArray: function(data) { if (typeof data==='string') return new TextEncoder().encode(data); return new Uint8Array(); },
+    t2s: function(text) { return Deno.core.ops.op_java_t2s(String(text)); },
+    s2t: function(text) { return Deno.core.ops.op_java_s2t(String(text)); },
+    androidId: function() { return 'abyss-reader-android-id'; },
+    getWebViewUA: function() { return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'; },
+
+    // ── Cookie 和登录 ──
+    getCookie: function(tag, key) { return Deno.core.ops.op_java_get_cookie(String(tag), key?String(key):''); },
+    setCookie: function(url, s) { Deno.core.ops.op_java_set_cookie(String(url), String(s)); },
+    putLoginHeader: function(h) { Deno.core.ops.op_java_put('default','loginHeader',String(h)); },
+    getLoginHeader: function() { return Deno.core.ops.op_java_get('default','loginHeader'); },
+    getLoginInfoMap: function() { var v=Deno.core.ops.op_java_get('default','loginHeader'); if(!v) return {}; try{return JSON.parse(v.replace(/^#/,''))}catch(e){return {};} },
+    putLoginInfo: function(i) { Deno.core.ops.op_java_put('default','loginHeader','#'+i); },
+    loadCookies: function() { Deno.core.ops.op_java_load_cookies(); },
+    saveCookies: function() { Deno.core.ops.op_java_save_cookies(); },
+    loginComplete: function(url, cookieStr) { return Deno.core.ops.op_java_login_complete(String(url), String(cookieStr)); },
+    startBrowser: function(url) { Deno.core.ops.op_java_start_browser(String(url)); },
+    startBrowserAwait: function(url, title) { return Deno.core.ops.op_java_start_browser_await(String(url), String(title)); },
+
+    // ── 日志 ──
+    log: function(msg) { Deno.core.ops.op_java_emit_log('info', String(msg)); return msg; },
+    toast: function(msg) { Deno.core.ops.op_java_emit_log('warn', String(msg)); return msg; },
+    longToast: function(msg) { Deno.core.ops.op_java_emit_log('error', String(msg)); return msg; },
+
+    // ── 规则解析辅助 ──
+    getString: function(ruleStr, mContent) { var result = mContent || globalThis.__sandbox_data?.result || ''; if (!ruleStr) return String(result); if (typeof result === 'object' && result[ruleStr] !== undefined) return String(result[ruleStr]); return String(result); },
+    getStringList: function(rule) { var result = globalThis.__sandbox_data?.result || ''; var parsed = parseRuleSelector(rule); var doc = org.jsoup.Jsoup.parse(String(result)); var css = parsed.css || '*'; var els = doc.select(css); return applyRuleSelector(els, parsed); },
+    getElement: function(rule) { var result = globalThis.__sandbox_data?.result || ''; var parsed = parseRuleSelector(rule); parsed.indexes = [0]; var doc = org.jsoup.Jsoup.parse(String(result)); var css = parsed.css || '*'; var els = doc.select(css); var r = applyRuleSelector(els, parsed); if (r && r.size && r.size() > 0) return r.first(); return r; },
+    getElements: function(rule) { var result = globalThis.__sandbox_data?.result || ''; var parsed = parseRuleSelector(rule); var doc = org.jsoup.Jsoup.parse(String(result)); var css = parsed.css || '*'; var els = doc.select(css); return applyRuleSelector(els, parsed); },
+    setContent: function(html, baseUrl) { globalThis.__sandbox_data.result = html; globalThis.__sandbox_data.baseUrl = baseUrl || ''; },
+
+    // ── 书源变量 ──
+    source: { setVariable: function(k,v) { return globalThis.java.put(k,v); }, getVariable: function(k) { return globalThis.java.get(k); }, getKey: function() { return Deno.core.ops.op_java_get('default','bookSourceUrl'); }, getTag: function() { return Deno.core.ops.op_java_get('default','bookSourceName'); }, putLoginHeader: function(h) { globalThis.java.putLoginHeader(h); }, getLoginHeader: function() { return globalThis.java.getLoginHeader(); }, getLoginInfoMap: function() { return globalThis.java.getLoginInfoMap(); }, putLoginInfo: function(i) { globalThis.java.putLoginInfo(i); }, refreshExplore: function() {}, put: function(k,v) { return globalThis.java.put(k,v); }, get: function(k) { return globalThis.java.get(k); } },
+
+    // ── 缓存 ──
+    cache: { _store: {}, get: function(k) { return this._store[k]||null; }, put: function(k,v,t) { this._store[k]=v; }, delete: function(k) { delete this._store[k]; }, clear: function() { this._store={}; } },
+    cacheFile: function(url, saveTime) { return Deno.core.ops.op_java_cache_file(String(url)); },
+    importScript: function(path) { if(path.startsWith('http')) return globalThis.java.cacheFile(path); return ''; },
+
+    // ── 占位/桌面端不支持 ──
+    reGetBook: function() { globalThis.java.log('reGetBook: 桌面端不支持'); },
+    refreshTocUrl: function() { globalThis.java.log('refreshTocUrl: 桌面端不支持'); },
+    createSymmetricCrypto: function(algorithm, key, iv) { var algo = String(algorithm); if (algo.indexOf('AES/CBC') !== -1) { return { decryptStr: function(data) { return Deno.core.ops.op_java_aes_base64_decode(String(data), String(key) + '::' + String(iv || '')); }, encryptStr: function(data) { return data; } }; } return { encryptStr: function(d){return d;}, decryptStr: function(d){return d;} }; },
+    createAsymmetricCrypto: function() { return { setPublicKey: function(){}, setPrivateKey: function(){}, encryptStr: function(d){return d;}, decryptStr: function(d){return d;} }; },
+    desEncodeToBase64String: function(data, key) { return data; },
+    Map: function(key) { return ''; },
+    queryTTF: function(data, useCache) { globalThis.java.log('queryTTF: 桌面端不支持'); return null; },
+    replaceFont: function(text, errTTF, corTTF, filter) { return text; },
+    toNumChapter: function(s) { return s; },
+    htmlFormat: function(str) { return str; },
+    getReadBookConfig: function() { return '{}'; },
+    getThemeMode: function() { return '0'; },
+    getThemeConfig: function() { return '{}'; },
+
+    // ── 其他运行时 API ──
+    eventListener: false, on: function(){}, emit: function(){}, readBookConfig: {},
+    upLoginData: function(i){ Deno.core.ops.op_java_up_login_data(String(i)); },
+    refreshExplore: function(){ Deno.core.ops.op_java_refresh_explore(); },
+    refreshBookInfo: function(){ Deno.core.ops.op_java_refresh_book_info(); },
+    showBrowser: function(){},
+    showPhoto: function(src){ Deno.core.ops.op_java_show_photo(String(src)); },
+    openVideoPlayer: function(url, title, isFloat) { return Deno.core.ops.op_java_open_video_player(String(url), String(title || '')); },
+    downloadFile: function(url) { return Deno.core.ops.op_java_download_file(String(Array.isArray(url) ? url[0] : url)); },
+    getVerificationCode: function(svg){ return Deno.core.ops.op_java_get_verification_code(String(svg)); },
+    openUrl: function(u){ globalThis.java.startBrowser(u); },
+    searchBook: function(k,s){ window.__search_event = { keyword: k, source: s }; Deno.core.ops.op_java_search_book(String(k), JSON.stringify(s)); },
+    copyText: function(t){ Deno.core.ops.op_java_copy_text(String(t)); }
+};
+
+// ── 全局对象 ──
+globalThis.cookie = { getCookie: function(t,k) { return globalThis.java.getCookie(t,k); }, getKey: function(t,k) { return globalThis.java.getCookie(t,k); }, setCookie: function(u,c) { globalThis.java.setCookie(u,c); }, removeCookie: function(u) { globalThis.java.setCookie(u,''); } };
+globalThis.Packages = { org: { jsoup: { Jsoup: { parse: function(html) { var raw = Deno.core.ops.op_jsoup_parse(String(html)); try { var parsed = JSON.parse(raw); if (parsed && parsed.root) { globalThis.java.log("jsoup root.tag=" + parsed.root.tag + " children=" + (parsed.root.children ? parsed.root.children.length : 0)); return createJsoupFromNode(parsed.root, parsed.html); } } catch(e) { globalThis.java.log("jsoup parse error: " + e.message); } return createEmptyResult(); } } } }, javax: { crypto: { Cipher: { getInstance: function(algo) { return { init: function(mode, keySpec, ivSpec) {}, doFinal: function(data) { return data; } }; } } } }, android: { util: { Base64: { encodeToString: function(d) { return globalThis.java.base64Encode(d); }, decode: function(d) { return globalThis.java.base64Decode(d); } } } } };
+globalThis.cache = globalThis.java.cache;
+globalThis.org = globalThis.Packages.org;
+
+// ── JS 库加载 ──
+globalThis.__loadJsLib = function(source, _java) {
+    try {
+        var savedJava = _java || globalThis.java;
+        var jsLib = source.jsLib;
+        if (typeof jsLib === 'string') {
+            try { var parsed = JSON.parse(jsLib); if (parsed && typeof parsed === 'object') { var keys = Object.keys(parsed); for (var i = 0; i < keys.length; i++) { var libUrl = parsed[keys[i]]; try { var libCode = savedJava.cacheFile(libUrl); if (libCode) (0,eval)(libCode); } catch(e) {} } } }
+            catch(e) { try { (0,eval)(jsLib); } catch(e2) {} }
+        } else if (jsLib && typeof jsLib === 'object') { var keys = Object.keys(jsLib); for (var i = 0; i < keys.length; i++) { var libUrl = jsLib[keys[i]]; try { var libCode = savedJava.cacheFile(libUrl); if (libCode) (0,eval)(libCode); } catch(e) {} } }
+        globalThis.java = savedJava;
+    } catch(e) {}
+};
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/js_runtime/runtime.rs ===
+
+use anyhow::Result;
+use deno_core::{JsRuntime, RuntimeOptions};
+use std::cell::RefCell;
+
+const POLYFILL_JS: &str = include_str!("polyfill.js");
+
+deno_core::extension!(
+    abyss_java,
+    ops = [
+        crate::js_runtime::ops::op_java_ajax,
+        crate::js_runtime::ops::op_java_web_js,
+        crate::js_runtime::ops::op_java_emit_log,
+        crate::js_runtime::ops::op_jsoup_parse,
+        crate::js_runtime::ops::op_java_base64_encode,
+        crate::js_runtime::ops::op_java_base64_decode,
+        crate::js_runtime::ops::op_java_md5_encode,
+        crate::js_runtime::ops::op_java_aes_base64_decode,
+        crate::js_runtime::ops::op_java_put,
+        crate::js_runtime::ops::op_java_get,
+        crate::js_runtime::ops::op_java_get_cookie,
+        crate::js_runtime::ops::op_java_set_cookie,
+        crate::js_runtime::ops::op_java_start_browser,
+        crate::js_runtime::ops::op_java_time_format,
+        crate::js_runtime::ops::op_java_encode_uri,
+        crate::js_runtime::ops::op_java_decode_uri,
+        crate::js_runtime::ops::op_java_t2s,
+        crate::js_runtime::ops::op_java_s2t,
+        crate::js_runtime::ops::op_java_random_uuid,
+        crate::js_runtime::ops::op_java_cache_file,
+        crate::js_runtime::ops::op_java_copy_text,
+        crate::js_runtime::ops::op_java_get_verification_code,
+        crate::js_runtime::ops::op_java_up_login_data,
+        crate::js_runtime::ops::op_java_refresh_explore,
+        crate::js_runtime::ops::op_java_refresh_book_info,
+        crate::js_runtime::ops::op_java_search_book,
+        crate::js_runtime::ops::op_java_save_cookies,
+        crate::js_runtime::ops::op_java_load_cookies,
+        crate::js_runtime::ops::op_java_start_browser_await,
+        crate::js_runtime::ops::op_java_login_complete,
+        crate::js_runtime::ops::op_java_show_photo,
+        crate::js_runtime::ops::op_java_open_video_player,
+        crate::js_runtime::ops::op_java_download_file,
+    ],
+);
+
+thread_local! {
+    static RUNTIME: RefCell<Option<JsRuntime>> = RefCell::new(None);
+}
+
+fn get_or_create_runtime() -> JsRuntime {
+    RUNTIME.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if let Some(rt) = opt.take() { return rt; }
+        let mut rt = JsRuntime::new(RuntimeOptions {
+            extensions: vec![abyss_java::init_ops_and_esm()],
+            ..Default::default()
+        });
+        rt.execute_script("polyfill.js", POLYFILL_JS).ok();
+        crate::js_runtime::ops::load_cookies_from_file();
+        rt
+    })
+}
+
+fn return_runtime(rt: JsRuntime) {
+    RUNTIME.with(|cell| { *cell.borrow_mut() = Some(rt); });
+}
+
+// 预处理代码：移除行内注释，保留代码结构
+fn preprocess_code(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut result = Vec::new();
+    let mut in_multiline_comment = false;
+    
+    for line in lines {
+        let mut processed = String::new();
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        let mut in_string = false;
+        let mut string_char = '\0';
+        
+        while i < chars.len() {
+            let c = chars[i];
+            
+            // 处理字符串
+            if (c == '"' || c == '\'') && !in_multiline_comment {
+                if !in_string {
+                    in_string = true;
+                    string_char = c;
+                } else if c == string_char {
+                    in_string = false;
+                }
+                processed.push(c);
+                i += 1;
+                continue;
+            }
+            
+            // 在字符串中直接追加
+            if in_string {
+                processed.push(c);
+                i += 1;
+                continue;
+            }
+            
+            // 处理多行注释
+            if !in_multiline_comment && i + 1 < chars.len() && c == '/' && chars[i + 1] == '*' {
+                in_multiline_comment = true;
+                i += 2;
+                continue;
+            }
+            if in_multiline_comment && i + 1 < chars.len() && c == '*' && chars[i + 1] == '/' {
+                in_multiline_comment = false;
+                i += 2;
+                continue;
+            }
+            if in_multiline_comment {
+                i += 1;
+                continue;
+            }
+            
+            // 处理行注释（不在字符串中，不在多行注释中）
+            if i + 1 < chars.len() && c == '/' && chars[i + 1] == '/' {
+                // 跳过行注释，但保留前面的空格
+                break;
+            }
+            
+            // 正常字符
+            processed.push(c);
+            i += 1;
+        }
+        
+        // 如果行注释被截断，不添加剩余部分
+        let trimmed = processed.trim();
+        if !trimmed.is_empty() || (!in_multiline_comment && processed.trim().is_empty() && line.trim().is_empty()) {
+            result.push(processed);
+        } else if !in_multiline_comment && !trimmed.is_empty() {
+            result.push(processed);
+        }
+    }
+    
+    result.join("\n")
+}
+
+fn prepare_code(code: &str) -> String {
+    let trimmed = code.trim();
+    if trimmed.is_empty() { return code.to_string(); }
+    
+    // 先预处理移除注释
+    let cleaned = preprocess_code(code);
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let line_count = lines.len();
+    if line_count == 0 { return code.to_string(); }
+    
+    let mut last_non_empty = line_count;
+    while last_non_empty > 0 && lines[last_non_empty - 1].trim().is_empty() { last_non_empty -= 1; }
+    if last_non_empty == 0 { return code.to_string(); }
+    
+    let last_line = lines[last_non_empty - 1].trim();
+    if last_line.contains("return ") || last_line.starts_with("return") { return cleaned; }
+    
+    let decl_keywords = ["var ", "let ", "const ", "function ", "class ", "import ", "export "];
+    let stmt_keywords = ["if ", "for ", "while ", "switch ", "try ", "throw ", "break ", "continue ", "debugger "];
+    let mut expr_line_idx: Option<usize> = None;
+    let mut idx = last_non_empty;
+    while idx > 0 {
+        idx -= 1;
+        let line = lines[idx].trim();
+        if line.is_empty() || line.starts_with("//") || line.starts_with("/*") { continue; }
+        let is_decl = decl_keywords.iter().any(|kw| line.starts_with(kw));
+        let is_stmt = stmt_keywords.iter().any(|kw| line.starts_with(kw));
+        if !is_decl && !is_stmt { expr_line_idx = Some(idx); break; }
+    }
+    let target_idx = match expr_line_idx { Some(i) => i, None => return cleaned };
+    let mut result = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i == target_idx {
+            let expr = line.trim().trim_end_matches(';').trim();
+            result.push_str(&format!("return {};", expr));
+        } else {
+            result.push_str(line);
+        }
+        if i < line_count - 1 { result.push('\n'); }
+    }
+    result
+}
+
+fn escape_for_js_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+}
+
+pub fn execute(code: &str, context_json: &str) -> Result<String, String> {
+    let mut rt = get_or_create_runtime();
+    let inject = format!("globalThis.__sandbox_data = {};", context_json);
+    if let Err(e) = rt.execute_script("inject_context", inject) {
+        return_runtime(rt);
+        return Err(format!("注入上下文失败: {}", e));
+    }
+    let prepared = prepare_code(code);
+    let escaped_code = escape_for_js_literal(&prepared);
+    let wrapper = format!(
+        r#"
+        (function() {{
+            var __data = globalThis.__sandbox_data || {{}};
+            var result = __data.result || '';
+            var src = __data.src || result;
+            var source = __data.source || {{}};
+            var baseUrl = __data.baseUrl || '';
+            var key = __data.key || '';
+            var page = __data.page || 1;
+            var book = __data.book || {{}};
+            var chapter = __data.chapter || {{}};
+            var java = globalThis.java || {{}};
+            var cookie = globalThis.cookie || {{}};
+            var Packages = globalThis.Packages || {{}};
+            var cache = globalThis.cache || {{}};
+
+            if (source && !source.getKey) source.getKey = function() {{ return source.bookSourceUrl || ''; }};
+            if (source && !source.getTag) source.getTag = function() {{ return source.bookSourceName || ''; }};
+            if (source && !source.getLoginHeader) source.getLoginHeader = function() {{ return java.getLoginHeader(); }};
+            if (source && !source.putLoginHeader) source.putLoginHeader = function(h) {{ java.putLoginHeader(h); }};
+            if (source && !source.getLoginInfoMap) source.getLoginInfoMap = function() {{ return java.getLoginInfoMap(); }};
+            if (source && !source.refreshExplore) source.refreshExplore = function() {{ }};
+
+            var bookVars = {{}};
+            if (!book.putVariable) book.putVariable = function(k, v) {{ bookVars[k] = String(v); java.put('book_' + k, String(v)); return v; }};
+            if (!book.getVariable) book.getVariable = function(k) {{ return bookVars[k] || java.get('book_' + k); }};
+            if (!book.setReverseToc) book.setReverseToc = function(v) {{ java.put('book_reverseToc', v ? '1' : '0'); }};
+            if (!book.getBookUrl) book.getBookUrl = function() {{ return book.bookUrl || ''; }};
+
+            var chapterVars = {{}};
+            if (!chapter.putVariable) chapter.putVariable = function(k, v) {{ chapterVars[k] = String(v); java.put('ch_' + k, String(v)); return v; }};
+            if (!chapter.getVariable) chapter.getVariable = function(k) {{ return chapterVars[k] || java.get('ch_' + k); }};
+            if (!chapter.getUrl) chapter.getUrl = function() {{ return chapter.url || ''; }};
+
+            try {{ globalThis.__loadJsLib(source, java); }} catch(e) {{ }}
+
+            var __code = '{}'.replace(/@result/g, (typeof result === 'string' ? result : JSON.stringify(result)));
+
+            var fn = new Function('result', 'src', 'source', 'baseUrl', 'key', 'page', 'book', 'java', 'cookie', 'Packages', 'cache',
+                'return (function() {{ ' + __code + ' }})();');
+            var fnResult = fn(result, src, source, baseUrl, key, page, book, java, cookie, Packages, cache);
+
+            if (fnResult !== null && fnResult !== undefined) {{
+                if (Array.isArray(fnResult)) {{ return JSON.stringify(fnResult); }}
+                if (typeof fnResult === 'object') {{
+                    if (fnResult._items && Array.isArray(fnResult._items)) {{
+                        try {{
+                            var arr = [];
+                            var maxItems = Math.min(fnResult._items.length, 500);
+                            for (var i = 0; i < maxItems; i++) {{
+                                var item = fnResult._items[i]; var obj = {{}};
+                                if (item._tag) obj.tag = item._tag;
+                                if (item._attrs) {{ obj.attrs = {{}}; var ks = Object.keys(item._attrs); for (var k = 0; k < Math.min(ks.length, 10); k++) {{ obj.attrs[ks[k]] = String(item._attrs[ks[k]]).substring(0, 200); }} }}
+                                try {{ var txt = typeof item.text === 'function' ? item.text() : (item.text || ''); if (txt && txt.length < 1000) obj.text = txt; }} catch(e) {{}}
+                                arr.push(obj);
+                            }}
+                            return JSON.stringify(arr);
+                        }} catch(e) {{ return JSON.stringify({{ error: "序列化失败", count: fnResult._items.length }}); }}
+                    }}
+                    if (fnResult._tag) {{
+                        var obj = {{}}; obj.tag = fnResult._tag;
+                        if (fnResult._attrs) {{ obj.attrs = {{}}; var ks = Object.keys(fnResult._attrs); for (var k = 0; k < ks.length; k++) obj.attrs[ks[k]] = fnResult._attrs[ks[k]]; }}
+                        var txt = typeof fnResult.text === 'function' ? fnResult.text() : (fnResult.text || ''); if (txt) obj.text = txt;
+                        return JSON.stringify(obj);
+                    }}
+                    return JSON.stringify(fnResult);
+                }}
+                return String(fnResult);
+            }}
+            return '';
+        }})()
+        "#,
+        escaped_code
+    );
+    let result_str = match rt.execute_script("rule_script", wrapper) {
+        Ok(global) => {
+            let scope = &mut rt.handle_scope();
+            let local = deno_core::v8::Local::new(scope, global);
+            local.to_rust_string_lossy(scope)
+        }
+        Err(e) => { return_runtime(rt); return Err(format!("执行失败: {}", e)); }
+    };
+    return_runtime(rt);
+    Ok(result_str)
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/network/http.rs ===
+
+use crate::error::{AbyssError, Result};
+use reqwest::Client;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
+use reqwest::Method;
+
+static CLIENT_CACHE: LazyLock<Mutex<HashMap<String, Client>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn is_blocked_host(hostname: &str) -> bool {
+    let blocked = ["127.0.0.1", "localhost", "::1", "0.0.0.0"];
+    if blocked.contains(&hostname) {
+        return true;
+    }
+    if let Ok(addr) = hostname.parse::<std::net::Ipv4Addr>() {
+        let octets = addr.octets();
+        if octets[0] == 127 || octets[0] == 10 { return true; }
+        if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 { return true; }
+        if octets[0] == 192 && octets[1] == 168 { return true; }
+        if octets[0] == 169 && octets[1] == 254 { return true; }
+    }
+    false
+}
+
+pub async fn execute_http_request(
+    url: &str,
+    method: &str,
+    headers: Option<HashMap<String, String>>,
+    body: Option<String>,
+    charset: Option<String>,
+    timeout_secs: u64,
+) -> Result<String> {
+    let parsed = url::Url::parse(url).map_err(|e| AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    if let Some(host) = parsed.host_str() {
+        if is_blocked_host(host) {
+            return Err(AbyssError::ConfigError(format!("禁止访问内网地址: {}", host)));
+        }
+    }
+
+    let domain = parsed.host_str().unwrap_or("default").to_string();
+    let mut cache = CLIENT_CACHE.lock().await;
+    let client = if let Some(c) = cache.get(&domain) {
+        c.clone()
+    } else {
+        let c = Client::builder()
+            .user_agent(crate::js_runtime::ops::get_ua())
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        cache.insert(domain.clone(), c.clone());
+        c
+    };
+    drop(cache);
+
+    let method_upper = method.to_uppercase();
+    let method_str = method_upper.as_str();
+
+    let mut req = if method_str == "PROPFIND" {
+        client.request(Method::from_bytes(b"PROPFIND").unwrap(), url)
+    } else {
+        match method_str {
+            "POST" => client.post(url),
+            "PUT" => client.put(url),
+            "DELETE" => client.delete(url),
+            _ => client.get(url),
+        }
+    };
+
+    req = req
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+
+    if let Some(h) = &headers {
+        for (k, v) in h {
+            req = req.header(k, v);
+        }
+    }
+
+    if let Some(b) = &body {
+        req = req.header("Content-Type", "application/x-www-form-urlencoded").body(b.clone());
+    }
+
+    let response = req.send().await?;
+    let bytes = response.bytes().await?;
+
+    let content = if let Some(charset_name) = &charset {
+        let encoding = encoding_rs::Encoding::for_label(charset_name.as_bytes())
+            .unwrap_or(encoding_rs::UTF_8);
+        let (decoded, _, _) = encoding.decode(&bytes);
+        decoded.into_owned()
+    } else {
+        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(2048)]);
+        if preview.to_lowercase().contains("charset=gbk") || preview.to_lowercase().contains("charset=gb2312") {
+            let encoding = encoding_rs::Encoding::for_label(b"gbk").unwrap_or(encoding_rs::UTF_8);
+            let (decoded, _, _) = encoding.decode(&bytes);
+            decoded.into_owned()
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    };
+
+    Ok(content)
+}
+
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/network/mod.rs ===
+
+pub mod http;
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/storage/db.rs ===
+
+use crate::error::{AbyssError, Result};
+use rusqlite::Connection;
+use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
+use serde_json::Value;
+
+static DB: OnceCell<Mutex<Connection>> = OnceCell::new();
+
+pub fn init_db(db_path: &str) -> Result<()> {
+    let conn = Connection::open(db_path).map_err(|e| AbyssError::DbError(e.to_string()))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS kv_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kv_store_key ON kv_store(key)",
+        [],
+    )?;
+
+    DB.set(Mutex::new(conn)).map_err(|_| AbyssError::DbError("DB already initialized".into()))?;
+    Ok(())
+}
+
+fn get_conn() -> Result<parking_lot::MutexGuard<'static, Connection>> {
+    Ok(DB.get()
+        .ok_or_else(|| AbyssError::DbError("DB not initialized".into()))?
+        .lock())
+}
+
+// ─── Store ───
+pub fn store_get(key: &str) -> Result<Option<String>> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare("SELECT value FROM kv_store WHERE key = ?")?;
+    let mut rows = stmt.query(rusqlite::params![key])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(row.get(0)?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn store_set(key: &str, value: &str) -> Result<()> {
+    let conn = get_conn()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+        rusqlite::params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn store_delete(key: &str) -> Result<()> {
+    let conn = get_conn()?;
+    conn.execute("DELETE FROM kv_store WHERE key = ?", rusqlite::params![key])?;
+    Ok(())
+}
+
+pub fn store_get_all() -> Result<Vec<(String, String)>> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare("SELECT key, value FROM kv_store")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+// ─── 书源 ───
+pub fn load_book_sources() -> Result<Vec<Value>> {
+    let raw = store_get("bookSource")?.unwrap_or_else(|| "[]".into());
+    let sources: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+    Ok(sources)
+}
+
+pub fn save_book_sources(sources: &[Value]) -> Result<()> {
+    let json = serde_json::to_string(sources)?;
+    store_set("bookSource", &json)
+}
+
+// ─── 书架 ───
+pub fn load_bookshelf() -> Result<Vec<Value>> {
+    let raw = store_get("bookshelf")?.unwrap_or_else(|| "[]".into());
+    let books: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+    Ok(books)
+}
+
+pub fn save_bookshelf(books: &[Value]) -> Result<()> {
+    let json = serde_json::to_string(books)?;
+    store_set("bookshelf", &json)
+}
+
+// ─── 阅读进度 ───
+pub fn load_reading_progress() -> Result<Value> {
+    let raw = store_get("readingProgress")?.unwrap_or_else(|| "{}".into());
+    let progress: Value = serde_json::from_str(&raw).unwrap_or_default();
+    Ok(progress)
+}
+
+pub fn save_reading_progress(progress: &Value) -> Result<()> {
+    store_set("readingProgress", &serde_json::to_string(progress)?)
+}
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/storage/mod.rs ===
+
+pub mod models;
+pub mod db;
+
+pub use db::{
+    init_db, store_get, store_set, store_delete, store_get_all,
+    load_book_sources, save_book_sources,
+    load_bookshelf, save_bookshelf,
+    load_reading_progress, save_reading_progress,
+};
+
+
+=== END FILE ===
+
+
+=== FILE: src-tauri/src/storage/models.rs ===
+
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Book {
+    pub id: i64,
+    pub name: String,
+    pub author: String,
+    pub book_url: String,
+    pub cover_url: Option<String>,
+    pub intro: Option<String>,
+    pub kind: Option<String>,
+    pub last_chapter: Option<String>,
+    pub toc_url: Option<String>,
+    pub origin: Option<String>,
+    pub origin_name: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookSource {
+    pub book_source_name: String,
+    pub book_source_url: String,
+    pub book_source_group: Option<String>,
+    pub book_source_comment: Option<String>,
+    pub search_url: Option<String>,
+    pub rule_search: Option<String>,
+    pub rule_book_info: Option<String>,
+    pub rule_toc: Option<String>,
+    pub rule_content: Option<String>,
+    pub rule_explore: Option<String>,
+    pub explore_url: Option<String>,
+    pub header: Option<String>,
+    pub enabled: bool,
+    pub enabled_cookie_jar: Option<bool>,
+    pub weight: Option<i32>,
+    pub js_lib: Option<String>,
+    pub login_url: Option<String>,
+    pub login_ui: Option<String>,
+    pub respond_time: Option<i64>,
+    pub last_update_time: Option<i64>,
+    pub book_url_pattern: Option<String>,
+    pub code: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingProgress {
+    pub book_url: String,
+    pub chapter_id: i64,
+    pub chapter_title: String,
+    pub scroll_percent: f64,
+    pub updated_at: String,
+}
+
+
+=== END FILE ===
+

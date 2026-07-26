@@ -12,6 +12,7 @@ name = "abyss-reader-tauri"
 path = "src/main.rs"
 
 [dependencies]
+arboard = "3"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -36,9 +37,15 @@ deno_core = "0.315"
 scraper = "0.20"
 aes = "0.8"
 cbc = "0.1"
-rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 open = "5"
+hanconv = "0.5"
+oxc_parser = "0.47"
+oxc_ast = "0.47"
+oxc_codegen = "0.47"
+oxc_allocator = "0.47"
+oxc_span = "0.47"
+oxc_semantic = "0.47"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

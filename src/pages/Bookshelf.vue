@@ -6,7 +6,7 @@
         <p class="page-subtitle">{{ bookshelfStore.filteredBooks.length }} 本书</p>
       </div>
       <div class="header-actions">
-        <input v-model="searchText" type="text" placeholder="搜索书名..." class="input-search" name="bookshelf-search" id="bookshelf-search" />
+        <input v-model="searchText" type="text" placeholder="搜索书名..." class="input-search" autocomplete="off" name="bookshelf-search" id="bookshelf-search" />
         <button class="btn-secondary" @click="showAddUrlModal = true">添加网址</button>
         <button class="btn-secondary" @click="triggerImport">导入 TXT</button>
         <button class="btn-secondary" @click="refreshBooks">刷新</button>
@@ -40,8 +40,13 @@
         @click="openBook(idx)"
       >
         <div class="book-cover">
-          <img v-if="book.coverUrl && !(book as any)._coverFailed" :src="book.coverUrl" loading="lazy" @error="() => (book as any)._coverFailed = true" />
-          <div v-if="!book.coverUrl || (book as any)._coverFailed" class="cover-placeholder">
+          <img
+            v-if="getCoverSrc(book) && !(book as any)._coverFailed"
+            :src="getCoverSrc(book)"
+            loading="lazy"
+            @error="() => (book as any)._coverFailed = true"
+          />
+          <div v-if="!getCoverSrc(book) || (book as any)._coverFailed" class="cover-placeholder">
             <div class="cover-overlay">
               <div class="cover-title">{{ book.name || '未命名' }}</div>
               <div class="cover-author">{{ book.author || '佚名' }}</div>
@@ -70,9 +75,10 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useMessage, NModal, NInput } from 'naive-ui'
 import { useBookshelfStore } from '@/store'
-import { store, reader as readerApi, engine } from '@/api'
+import { store, reader as readerApi } from '@/api'
+import { invoke } from '@tauri-apps/api/core'
 import CustomDropdown from '@/components/CustomDropdown.vue'
-import type { BookSource } from '@shared/types'
+import type { BookSource, Book } from '@shared/types'
 
 const message = useMessage()
 const bookshelfStore = useBookshelfStore()
@@ -82,6 +88,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const showAddUrlModal = ref(false)
 const addUrl = ref('')
 const addUrlSourceIndex = ref(0)
+const coverCache = ref<Record<string, string>>({})
 
 const addUrlSourceOptions = computed(() =>
   (Array.isArray(sources.value) ? sources.value : []).map((s: BookSource, i: number) => ({
@@ -93,10 +100,24 @@ const addUrlSourceOptions = computed(() =>
 watch(searchText, (val) => bookshelfStore.setFilter(val))
 
 async function loadSources() {
+  try { sources.value = (await store.get('bookSource')) || [] } catch { sources.value = [] }
+}
+
+function getCoverSrc(book: Book): string | null {
+  if (!book.coverUrl) return null
+  if (coverCache.value[book.coverUrl]) return coverCache.value[book.coverUrl]
+  loadCoverFromCache(book)
+  return book.coverUrl
+}
+
+async function loadCoverFromCache(book: Book) {
+  if (!book.coverUrl) return
   try {
-    const raw = await store.get('bookSource')
-    sources.value = Array.isArray(raw) ? raw : []
-  } catch { sources.value = [] }
+    const cached = await invoke('cache_get_cover', { url: book.coverUrl })
+    if (cached) {
+      coverCache.value = { ...coverCache.value, [book.coverUrl!]: cached as string }
+    }
+  } catch {}
 }
 
 async function refreshBooks() {
@@ -128,14 +149,10 @@ async function addUrlBook() {
   const source = arr[addUrlSourceIndex.value]
   if (!source) { message.error('请选择书源'); return }
   try {
-    const result: any = await engine.getBookInfo(source, addUrl.value.trim())
+    const { getBookInfo } = await import('../../engine/business/book-info.js')
+    const result = await getBookInfo(source, addUrl.value.trim())
     if (!result || !result.name) throw new Error('获取失败')
-    const bookData = result
-    const newBook = {
-      ...bookData,
-      origin: source.bookSourceUrl || '',
-      originName: source.bookSourceName || source.name || '',
-    }
+    const newBook = { ...result, origin: source.bookSourceUrl || '', originName: source.bookSourceName || source.name || '' }
     const books = (await store.get('bookshelf')) || []
     const bookList = Array.isArray(books) ? books : []
     bookList.unshift(newBook)
