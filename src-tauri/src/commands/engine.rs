@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::network::http::execute_http_request;
 use serde_json::Value;
 use std::collections::HashMap;
+use tauri::Manager;
 
 #[tauri::command] pub async fn store_get(key: String) -> Result<Option<String>> { crate::storage::store_get(&key) }
 #[tauri::command] pub async fn store_set(key: String, value: String) -> Result<()> { crate::storage::store_set(&key, &value) }
@@ -19,24 +20,20 @@ use std::collections::HashMap;
 fn extract_headers(source: &Value) -> Option<HashMap<String, String>> {
     let header_str = source.get("header").and_then(|v| v.as_str())?;
     let trimmed = header_str.trim();
-    
-    // 1. 包含 JS 代码 → 默认 UA
+
     if trimmed.contains("<js>") || trimmed.contains("@js:") {
         return Some(HashMap::from([("User-Agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string())]));
     }
-    
-    // 2. 单引号 JSON → 转双引号后解析
+
     let normalized = trimmed.replace('\'', "\"").replace('\n', "").replace('\r', "").replace('\t', " ");
     if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(&normalized) {
         return Some(h);
     }
-    
-    // 3. 本身是标准 JSON
+
     if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(trimmed) {
         return Some(h);
     }
-    
-    // 4. 回退：逐行提取 key: value
+
     let mut map = HashMap::new();
     for line in trimmed.lines() {
         let l = line.trim().trim_matches(',').trim().replace('\'', "\"");
@@ -48,7 +45,7 @@ fn extract_headers(source: &Value) -> Option<HashMap<String, String>> {
             }
         }
     }
-    
+
     if map.is_empty() {
         map.insert("User-Agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string());
     }
@@ -112,4 +109,12 @@ fn resolve_url(url: &str, base_url: &str) -> String {
 
 #[tauri::command] pub async fn engine_parse_rule(source: Value, rule: String, data: Value, context: Option<Value>) -> Result<Value> {
     Ok(serde_json::json!({ "success": true, "data": data, "rule": rule, "source": source, "context": context }))
+}
+
+#[tauri::command]
+pub async fn show_main_window(app: tauri::AppHandle) -> Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    }
+    Ok(())
 }

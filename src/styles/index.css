@@ -26,7 +26,6 @@
   --duration-fast: 180ms;
   --duration-normal: 280ms;
 
-  /* 统一控件高度 */
   --control-height: 38px;
 }
 
@@ -94,7 +93,8 @@ body {
 
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
-/* ─── 全局禁用自动填充弹窗 ─── */
+#app { -webkit-context-menu: none; }
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
@@ -105,14 +105,10 @@ input:-webkit-autofill:active {
   transition: background-color 50000s ease-in-out 0s;
 }
 
-/* ─── 全局强制 cursor ─── */
-button, [role="button"], .btn-back, .btn-back * {
-  cursor: pointer !important;
-}
+button, [role="button"], .btn-back, .btn-back * { cursor: pointer !important; }
 button:disabled { cursor: not-allowed !important; }
 a { cursor: pointer !important; }
 
-/* ─── 按钮 ─── */
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 0 18px; font-size: 14px; font-weight: var(--font-medium);
@@ -147,7 +143,6 @@ a { cursor: pointer !important; }
 .btn-danger:hover { background: #c0392b; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(192,57,43,0.25); }
 .btn-danger:disabled { opacity: 0.4; cursor: not-allowed !important; transform: none; }
 
-/* ─── 输入框 ─── */
 .input-search, .search-input {
   padding: 0 14px; font-size: 14px; color: var(--text-primary);
   background: var(--bg-card); border: 1px solid var(--border-color);
@@ -160,7 +155,6 @@ a { cursor: pointer !important; }
 .input-search:focus, .search-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 .input-search::placeholder, .search-input::placeholder { color: var(--text-muted); opacity: 0.7; }
 
-/* ─── 自定义下拉组件 ─── */
 .custom-dropdown { position: relative; display: inline-block; min-width: 120px; user-select: none; }
 .custom-dropdown-trigger {
   display: flex; align-items: center; justify-content: space-between;
@@ -189,17 +183,14 @@ a { cursor: pointer !important; }
 .custom-dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .custom-dropdown-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
 
-/* ─── 页面标题 ─── */
 .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
 .page-title { font-size: 28px; font-weight: var(--font-semibold); color: var(--text-primary); letter-spacing: -0.3px; margin: 0; }
 .page-subtitle { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
 
-/* ─── 空状态 ─── */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 68px 0; text-align: center; }
 .empty-state h3 { font-size: 20px; color: var(--text-secondary); font-weight: var(--font-medium); margin-bottom: 8px; }
 .empty-state p { font-size: 14px; color: var(--text-muted); margin: 0; }
 
-/* ─── 书籍网格 ─── */
 .books-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px; }
 .book-card {
   cursor: pointer; border-radius: var(--radius-md); overflow: hidden;
@@ -217,23 +208,19 @@ a { cursor: pointer !important; }
 .book-info h4 { font-size: 14px; font-weight: var(--font-medium); color: var(--text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .book-info p { font-size: 12px; color: var(--text-muted); margin: 3px 0 0; }
 
-/* ─── 进度条 ─── */
 .progress-bar { height: 5px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--brand); border-radius: 3px; transition: width 0.4s var(--ease-out); }
 
-/* ─── 骨架屏 ─── */
 .book-card-skeleton .skeleton { background: var(--bg-card); border-radius: var(--radius-sm); animation: shimmer 1.5s infinite; }
 .skeleton-cover { aspect-ratio: 2/3; border-radius: var(--radius-md) !important; }
 .skeleton-title { height: 16px; width: 80%; margin-top: 14px; }
 .skeleton-author { height: 12px; width: 50%; margin-top: 8px; }
 @keyframes shimmer { 0%,100% { opacity: 0.35; } 50% { opacity: 0.65; } }
 
-/* ─── 滚动条 ─── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: var(--radius-full); }
 
-/* ─── 表单 ─── */
 .form-select {
   appearance: none; -webkit-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -267,7 +254,6 @@ select:not(.form-select):hover { border-color: var(--brand); }
 select:not(.form-select):focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 select:not(.form-select) option { background: var(--bg-card); color: var(--text-primary); }
 
-/* ─── 切换开关 ─── */
 .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-slider { position: absolute; cursor: pointer !important; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
@@ -275,145 +261,10 @@ select:not(.form-select) option { background: var(--bg-card); color: var(--text-
 .toggle-switch input:checked + .toggle-slider { background: var(--brand); }
 .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
 
-/* ─── 通用标签 ─── */
 .badge { font-size: 11px; padding: 2px 10px; border-radius: 9999px; font-weight: 500; }
 .badge-vip { background: rgba(255,193,7,0.12); color: #ffc107; }
 
-/* ─── Naive UI 全局主题覆盖 ─── */
-.n-modal .n-card,
-.n-modal-container .n-card {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-color) !important;
-  color: var(--text-primary) !important;
-}
-.n-modal .n-card__title,
-.n-dialog .n-card__title,
-.n-modal-container .n-card__title {
-  color: var(--text-primary) !important;
-  font-size: 17px !important;
-  font-weight: 600 !important;
-}
-.n-modal .n-card__content,
-.n-dialog .n-card__content {
-  color: var(--text-secondary) !important;
-}
-.n-dialog, .n-modal-container {
-  background: var(--bg-card) !important;
-  border-radius: var(--radius-lg) !important;
-}
-.n-message {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow-md) !important;
-  border-radius: var(--radius-md) !important;
-}
-.n-message .n-message__content { color: var(--text-primary) !important; }
-.n-message.n-message--success { border-left: 3px solid #4caf50 !important; }
-.n-message.n-message--error { border-left: 3px solid #e74c3c !important; }
-.n-message.n-message--warning { border-left: 3px solid #f39c12 !important; }
-.n-message.n-message--info { border-left: 3px solid var(--brand) !important; }
-.n-notification {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow-lg) !important;
-}
-.n-notification .n-notification-main__title { color: var(--text-primary) !important; }
-.n-notification .n-notification-main__description { color: var(--text-secondary) !important; }
-.n-input {
-  background: var(--bg-card) !important;
-  border-color: var(--border-color) !important;
-  color: var(--text-primary) !important;
-}
-.n-input .n-input__input-el {
-  background: transparent !important;
-  color: var(--text-primary) !important;
-}
-.n-button--primary-type { background: var(--brand) !important; border-color: var(--brand) !important; }
-.n-button--default-type { border-color: var(--border-color) !important; color: var(--text-secondary) !important; }
-
-/* ─── Naive UI Textarea 适配 ─── */
-.n-input.n-input--textarea {
-  background: var(--bg) !important;
-  border-color: var(--border-color) !important;
-}
-.n-input.n-input--textarea .n-input__textarea-el {
-  background: transparent !important;
-  color: var(--text-primary) !important;
-  caret-color: var(--text-primary) !important;
-}
-.n-input.n-input--textarea .n-input__placeholder {
-  color: var(--text-muted) !important;
-}
-
-/* ─── Naive UI Dialog 弹窗内容颜色 ─── */
-.n-dialog .n-card__content {
-  color: var(--text-primary) !important;
-}
-.n-dialog .n-card__title {
-  color: var(--text-primary) !important;
-}
-.n-dialog .n-card__action .n-button--default-type {
-  color: var(--text-secondary) !important;
-  border-color: var(--border-color) !important;
-}
-
-/* ─── Naive UI Dialog 强制覆盖 ─── */
-body .n-dialog .n-card__title,
-body .n-modal .n-card__title,
-body .n-dialog .n-card-header__main,
-body .n-modal .n-card-header__main {
-  color: var(--text-primary) !important;
-}
-body .n-dialog .n-card__content,
-body .n-modal .n-card__content {
-  color: var(--text-primary) !important;
-  background: var(--bg-card) !important;
-}
-body .n-dialog .n-card,
-body .n-modal .n-card {
-  background: var(--bg-card) !important;
-  border-color: var(--border-color) !important;
-}
-body .n-dialog .n-button--default-type {
-  color: var(--text-secondary) !important;
-  border-color: var(--border-color) !important;
-}
-body .n-dialog .n-button--primary-type {
-  background: var(--brand) !important;
-  border-color: var(--brand) !important;
-}
-body .n-dialog .n-button--warning-type {
-  background: #c0392b !important;
-  border-color: #c0392b !important;
-  color: #fff !important;
-}
-
-/* ─── Naive UI Dialog 终极覆盖 ─── */
-.n-card__title, .n-card-header__main, .n-card__content, .n-dialog .n-card__content, .n-dialog .n-card__title {
-  color: var(--text-primary) !important;
-}
-.n-card, .n-dialog, .n-dialog .n-card {
-  background: var(--bg-card) !important;
-  border-color: var(--border-color) !important;
-}
-.n-button.n-button--default-type {
-  color: var(--text-secondary) !important;
-  border-color: var(--border-color) !important;
-}
-.n-button.n-button--warning-type {
-  background: #c0392b !important;
-  border-color: #c0392b !important;
-  color: #fff !important;
-}
-.n-button.n-button--primary-type {
-  background: var(--brand) !important;
-  border-color: var(--brand) !important;
-  color: #0f0f0f !important;
-}
-
-/* ─── 工具类 ─── */
 .hidden { display: none; }
 .loading-spinner { width: 22px; height: 22px; border: 2px solid var(--border-color); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
 ::selection { background: rgba(212,160,23,0.25); color: var(--text-primary); }

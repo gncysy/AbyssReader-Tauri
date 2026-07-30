@@ -80,24 +80,30 @@ export interface BookInfoRule {
 }
 
 export interface TocRule {
+  preUpdateJs?: string | null
   chapterList?: string | null
   chapterName?: string | null
   chapterUrl?: string | null
+  formatJs?: string | null
+  isVolume?: string | null
   isVip?: string | null
   isPay?: string | null
-  isVolume?: string | null
   updateTime?: string | null
   nextTocUrl?: string | null
 }
 
 export interface ContentRule {
   content?: string | null
+  subContent?: string | null
+  title?: string | null
   nextContentUrl?: string | null
+  webJs?: string | null
+  sourceRegex?: string | null
   replaceRegex?: string | null
   imageStyle?: string | null
-  webView?: boolean | string | null
-  sourceRegex?: string | null
-  webJs?: string | null
+  imageDecode?: string | null
+  payAction?: string | null
+  callBackJs?: string | null
 }
 
 export interface ExploreRule {
@@ -158,4 +164,52 @@ export interface ReplaceRule {
   bookName: string
   bookOrigin: string
   timeoutMs: number
+}
+
+// ─── 订阅源 ───
+export interface RssSource {
+  sourceName: string
+  sourceUrl: string
+  sourceIcon?: string | null
+  sourceGroup?: string | null
+  sourceComment?: string | null
+  sortUrl?: string | null
+  ruleArticles?: string | null
+  ruleTitle?: string | null
+  ruleLink?: string | null
+  rulePubDate?: string | null
+  ruleDescription?: string | null
+  ruleImage?: string | null
+  ruleNextPage?: string | null
+  ruleContent?: string | null
+  style?: string | null
+  singleUrl?: boolean
+  articleStyle?: number
+  enabled: boolean
+  enabledCookieJar?: boolean
+  customOrder?: number
+  type?: number
+  enableJs?: boolean
+  loadWithBaseUrl?: boolean
+  startHtml?: string | null
+  startJs?: string | null
+  startStyle?: string | null
+  injectJs?: string | null
+  header?: string | null
+  jsLib?: string | null
+  loginUrl?: string | null
+  loginUi?: string | null
+  loginCheckJs?: string | null
+  [key: string]: any
+}
+
+export interface RssArticle {
+  title: string
+  link: string
+  description?: string | null
+  image?: string | null
+  pubDate?: string | null
+  sort?: string
+  origin?: string
+  read?: boolean
 }

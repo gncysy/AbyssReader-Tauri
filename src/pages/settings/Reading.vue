@@ -20,6 +20,31 @@
         <button class="size-btn" @click="increaseLineHeight">+</button>
       </div>
     </div>
+    <div class="setting-item">
+      <div>
+        <span class="label-text">简繁转换</span>
+        <span class="label-desc">{{ chineseConverterLabel }}</span>
+      </div>
+      <div class="option-group">
+        <button
+          v-for="opt in chineseConverterOptions"
+          :key="opt.value"
+          class="option-btn"
+          :class="{ active: chineseConverterType === opt.value }"
+          @click="setChineseConverterType(opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+    </div>
+    <div class="setting-item">
+      <div>
+        <span class="label-text">段落重排</span>
+        <span class="label-desc">智能重排段落，修复错误分段</span>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" :checked="reSegment" @change="setReSegment(($event.target as HTMLInputElement).checked)" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
   </div>
 </template>
 
@@ -37,11 +62,25 @@ const lineHeight = computed({
   get: () => readingStore.lineHeight,
   set: (val: number) => readingStore.setLineHeight(val)
 })
+const chineseConverterType = computed(() => readingStore.chineseConverterType)
+const reSegment = computed(() => readingStore.reSegment)
+
+const chineseConverterOptions = [
+  { label: '不转换', value: 0 },
+  { label: '繁 → 简', value: 1 },
+  { label: '简 → 繁', value: 2 },
+]
+const chineseConverterLabel = computed(() => {
+  const opt = chineseConverterOptions.find(o => o.value === chineseConverterType.value)
+  return opt ? opt.label : '不转换'
+})
 
 function increaseFontSize() { readingStore.increaseFontSize() }
 function decreaseFontSize() { readingStore.decreaseFontSize() }
 function increaseLineHeight() { readingStore.increaseLineHeight() }
 function decreaseLineHeight() { readingStore.decreaseLineHeight() }
+function setChineseConverterType(val: number) { readingStore.setChineseConverterType(val) }
+function setReSegment(val: boolean) { readingStore.setReSegment(val) }
 </script>
 
 <style scoped>
@@ -53,4 +92,14 @@ function decreaseLineHeight() { readingStore.decreaseLineHeight() }
 .label-desc { font-size: 13px; color: var(--text-muted); display: block; margin-top: 4px; }
 .size-btn { padding: 6px 14px; font-size: 15px; color: var(--text-secondary); background: transparent; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; min-width: 42px; }
 .size-btn:hover { border-color: var(--brand); color: var(--text-primary); background: var(--bg-hover); }
+.option-group { display: flex; gap: 4px; }
+.option-btn { padding: 6px 12px; font-size: 13px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; transition: color 0.18s, border-color 0.18s; }
+.option-btn:hover { color: var(--text-primary); border-color: var(--brand); }
+.option-btn.active { color: var(--brand); border-color: var(--brand); background: var(--bg-active); }
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: background 0.2s; }
+.toggle-slider::before { content: ''; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; background: var(--text-muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+.toggle-switch input:checked + .toggle-slider { background: var(--brand); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); background: #fff; }
 </style>

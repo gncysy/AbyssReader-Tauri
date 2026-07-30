@@ -5,6 +5,8 @@ pub mod js_runtime;
 pub mod storage;
 
 use tauri::Manager;
+use tauri::WebviewWindowBuilder;
+use tauri::WebviewUrl;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,6 +34,7 @@ pub fn run() {
             commands::download_binary,
             commands::proxy_image,
             commands::login_webview,
+            commands::rss_open_url,
             commands::engine_search,
             commands::engine_batch_search,
             commands::engine_get_toc,
@@ -51,6 +54,8 @@ pub fn run() {
             commands::cache_put_covers,
             commands::cache_put_toc,
             commands::cache_get_toc,
+            commands::cache_put_content,
+            commands::cache_get_content,
             commands::cache_has_cover,
             commands::cache_set_max_size,
             commands::cache_migrate,
@@ -82,8 +87,22 @@ pub fn run() {
                 }
             }
 
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("墨阅")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .decorations(false)
+                .background_color(tauri::window::Color(26, 26, 26, 255))
+                .visible(true)
+                .build()
+                .unwrap();
+
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("启动失败");
 }
+
+
+

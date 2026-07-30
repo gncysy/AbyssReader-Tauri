@@ -1,0 +1,2143 @@
+
+
+========================================
+=== src/pages/RssSources.vue ===
+========================================
+<template>
+  <div class="rss-page">
+    <header class="page-header">
+      <h1 class="page-title">订阅</h1>
+      <p class="page-subtitle">管理订阅源，获取更新</p>
+    </header>
+
+    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center">
+      <input v-model="searchKey" type="text" placeholder="搜索订阅源..." class="input-search" style="flex:1;max-width:320px" @input="filterSources" />
+      <button class="btn-primary" style="padding:6px 14px;font-size:13px" @click="showImportDialog">导入</button>
+      <button class="btn-secondary" style="padding:6px 14px;font-size:13px" @click="importDefault">恢复默认</button>
+    </div>
+
+    <div v-if="filteredSources.length > 0" class="rss-list">
+      <div
+        v-for="source in filteredSources"
+        :key="source.sourceUrl"
+        class="rss-card"
+        @click="openSource(source)"
+      >
+        <div class="rss-card-left">
+          <img v-if="source.sourceIcon" :src="source.sourceIcon" class="rss-icon" @error="(e) => (e.target as HTMLImageElement).style.display = 'none'" />
+          <div v-else class="rss-icon-placeholder">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div class="rss-info">
+            <h4 class="rss-name">{{ source.sourceName }}</h4>
+            <p class="rss-meta">
+              <span v-if="source.sourceGroup" class="rss-group">{{ source.sourceGroup }}</span>
+              <span v-if="source.sourceComment" class="rss-comment">{{ source.sourceComment }}</span>
+            </p>
+          </div>
+        </div>
+        <div class="rss-card-right" @click.stop>
+          <button class="btn-icon" @click="editSource(source)" title="编辑">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="btn-icon" @click="toggleEnabled(source)" :title="source.enabled ? '禁用' : '启用'">
+            <svg v-if="source.enabled" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <button class="btn-icon" @click="deleteSource(source)" title="删除">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-else class="empty-state">
+      <p>暂无订阅源</p>
+      <p style="font-size:13px;color:var(--text-muted)">点击"导入"添加订阅源，或"恢复默认"加载内置源</p>
+    </div>
+
+    <n-modal v-model:show="showImportModal" preset="dialog" title="导入订阅源" positive-text="导入" @positive-click="doImport">
+      <n-input v-model:value="importJsonText" type="textarea" placeholder="粘贴订阅源 JSON..." :autosize="{ minRows: 8, maxRows: 16 }" />
+    </n-modal>
+
+    <n-modal v-model:show="showEditModal" preset="dialog" title="编辑订阅源" positive-text="保存" @positive-click="doEditSave">
+      <n-input v-model:value="editSourceName" placeholder="名称" style="margin-bottom:8px" />
+      <n-input v-model:value="editSourceUrl" placeholder="URL" style="margin-bottom:8px" />
+      <n-input v-model:value="editSourceGroup" placeholder="分组" style="margin-bottom:8px" />
+    </n-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useMessage, NModal, NInput } from 'naive-ui'
+import { invoke } from '@tauri-apps/api/core'
+import { store } from '@/api'
+import type { RssSource } from '@shared/types'
+
+const router = useRouter()
+const message = useMessage()
+
+const DEFAULT_RSS_SOURCES: RssSource[] = [
+  {
+    sourceName: '规则订阅', sourceUrl: 'https://www.yckceo.com/',
+    sourceIcon: 'https://www.yck2026.top/favicon.ico', sourceGroup: 'legado', sourceComment: '源仓库',
+    enabled: true, singleUrl: true, articleStyle: 0, customOrder: 0,
+    enableJs: true, loadWithBaseUrl: true, enabledCookieJar: true,
+  },
+  {
+    sourceName: '乌云净化', sourceUrl: 'https://www.lanzoux.com/b0bw8jwoh',
+    sourceIcon: 'https://cdn.jsdelivr.net/gh/gedoor/legado@master/app/src/main/res/mipmap-hdpi/ic_launcher.png',
+    sourceGroup: 'legado', sourceComment: '阅读规则净化',
+    enabled: true, singleUrl: true, articleStyle: 0, customOrder: 5,
+    enableJs: true, loadWithBaseUrl: true, enabledCookieJar: true,
+  },
+]
+
+const sources = ref<RssSource[]>([])
+const searchKey = ref('')
+const filteredSources = computed(() => {
+  if (!searchKey.value.trim()) return sources.value
+  const kw = searchKey.value.trim().toLowerCase()
+  return sources.value.filter(s =>
+    s.sourceName.toLowerCase().includes(kw) ||
+    (s.sourceGroup || '').toLowerCase().includes(kw) ||
+    (s.sourceComment || '').toLowerCase().includes(kw)
+  )
+})
+
+const showImportModal = ref(false)
+const importJsonText = ref('')
+const showEditModal = ref(false)
+const editingSource = ref<RssSource | null>(null)
+const editSourceName = ref('')
+const editSourceUrl = ref('')
+const editSourceGroup = ref('')
+
+async function loadSources() {
+  try { const data = await store.get('rssSources'); sources.value = Array.isArray(data) ? data : [] } catch { sources.value = [] }
+}
+async function saveSources() { await store.set('rssSources', sources.value) }
+
+async function importDefault() {
+  const existing = new Set(sources.value.map(s => s.sourceUrl))
+  const toAdd = DEFAULT_RSS_SOURCES.filter(s => !existing.has(s.sourceUrl))
+  if (toAdd.length === 0) { message.info('内置订阅源已存在'); return }
+  sources.value = [...sources.value, ...toAdd]; await saveSources()
+  message.success(`已导入 ${toAdd.length} 个内置订阅源`)
+}
+function showImportDialog() { importJsonText.value = ''; showImportModal.value = true }
+async function doImport() {
+  if (!importJsonText.value.trim()) { message.warning('请粘贴订阅源 JSON'); return }
+  try {
+    const data = JSON.parse(importJsonText.value); const items: any[] = Array.isArray(data) ? data : [data]
+    let count = 0; const existing = new Set(sources.value.map(s => s.sourceUrl))
+    for (const item of items) { if (!existing.has(item.sourceUrl)) { sources.value.push(item); existing.add(item.sourceUrl); count++ } }
+    await saveSources(); showImportModal.value = false; message.success(`已导入 ${count} 个订阅源`)
+  } catch { message.error('JSON 解析失败') }
+}
+function openSource(source: RssSource) {
+  if (source.startHtml) { router.push({ name: 'rss-articles', query: { sourceUrl: source.sourceUrl } }); return }
+  if (source.ruleArticles) { router.push({ name: 'rss-articles', query: { sourceUrl: source.sourceUrl } }); return }
+  invoke('rss_open_url', { url: source.sourceUrl, title: source.sourceName }).catch(() => {})
+}
+function toggleEnabled(source: RssSource) { source.enabled = !source.enabled; saveSources() }
+function editSource(source: RssSource) {
+  editingSource.value = source; editSourceName.value = source.sourceName
+  editSourceUrl.value = source.sourceUrl; editSourceGroup.value = source.sourceGroup || ''; showEditModal.value = true
+}
+async function doEditSave() {
+  if (!editingSource.value) return
+  editingSource.value.sourceName = editSourceName.value.trim()
+  editingSource.value.sourceUrl = editSourceUrl.value.trim()
+  editingSource.value.sourceGroup = editSourceGroup.value.trim() || null
+  await saveSources(); showEditModal.value = false; message.success('已保存')
+}
+async function deleteSource(source: RssSource) {
+  sources.value = sources.value.filter(s => s.sourceUrl !== source.sourceUrl); await saveSources()
+}
+
+loadSources()
+</script>
+
+<style scoped>
+.rss-page { position: relative; z-index: 1; }
+.rss-list { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
+.rss-card { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; background: var(--bg-card); cursor: pointer; transition: background 0.18s; min-height: 56px; }
+.rss-card:hover { background: var(--bg-hover); }
+.rss-card-left { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; }
+.rss-icon { width: 36px; height: 36px; border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; }
+.rss-icon-placeholder { width: 36px; height: 36px; border-radius: var(--radius-sm); background: var(--bg-hover); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+.rss-info { min-width: 0; }
+.rss-name { font-size: 15px; font-weight: 500; color: var(--text-primary); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rss-meta { font-size: 12px; color: var(--text-muted); margin: 2px 0 0; display: flex; gap: 8px; }
+.rss-group { color: var(--brand); background: var(--bg-active); padding: 1px 8px; border-radius: var(--radius-sm); font-size: 11px; }
+.rss-comment { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.rss-card-right { display: flex; gap: 4px; flex-shrink: 0; }
+.btn-icon { width: 32px; height: 32px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; transition: color 0.18s, background 0.18s; }
+.btn-icon:hover { color: var(--text-primary); background: var(--bg-hover); }
+</style>
+
+
+========================================
+=== src/pages/RssArticles.vue ===
+========================================
+<template>
+  <div class="rss-articles-page">
+    <header class="subpage-header">
+      <BackButton />
+      <h2>{{ source?.sourceName || '文章列表' }}</h2>
+    </header>
+
+    <div v-if="sortTabs.length > 1" class="sort-tabs">
+      <button
+        v-for="tab in sortTabs"
+        :key="tab.name"
+        class="sort-tab"
+        :class="{ active: activeSortName === tab.name }"
+        @click="switchSort(tab)"
+      >{{ tab.name }}</button>
+    </div>
+
+    <div v-if="isComplexType" class="complex-section">
+      <div class="search-row">
+        <input v-model="complexSearchKey" type="text" placeholder="输入搜索关键词..." class="input-search" style="flex:1" @keyup.enter="runComplexSearch" />
+        <button class="btn-primary" :disabled="complexLoading" @click="runComplexSearch">{{ complexLoading ? '解密中...' : '搜索' }}</button>
+        <button class="btn-secondary" @click="openComplexInWebView">在 WebView 中打开</button>
+      </div>
+      <div v-if="complexResult" style="margin-top:12px">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px">解密结果：</p>
+        <div style="padding:10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius-sm);word-break:break-all;font-size:13px;max-height:120px;overflow-y:auto">{{ complexResult }}</div>
+        <button class="btn-primary" style="margin-top:8px;padding:6px 14px;font-size:13px" @click="fetchWithComplexResult">使用此结果加载</button>
+      </div>
+      <iframe v-if="complexIframeSrc" ref="complexIframe" :src="complexIframeSrc" style="display:none" @load="onComplexIframeLoad"></iframe>
+    </div>
+
+    <div v-if="!loading && articles.length > 0" :class="articleListClass">
+      <div
+        v-for="item in articles"
+        :key="item.link"
+        class="article-item"
+        :class="articleItemClass"
+        @click="openArticle(item)"
+      >
+        <img v-if="item.image && articleStyle !== 0" :src="item.image" class="article-image" @error="(e) => (e.target as HTMLImageElement).style.display='none'" />
+        <div class="article-content">
+          <h4 class="article-title">{{ item.title }}</h4>
+          <p v-if="item.description && articleStyle !== 2 && articleStyle !== 4" class="article-desc">{{ item.description }}</p>
+          <p v-if="item.pubDate" class="article-date">{{ item.pubDate }}</p>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="hasNextPage && !loading" style="text-align:center;padding:16px">
+      <button class="btn-secondary" :disabled="loadingMore" @click="loadNextPage">{{ loadingMore ? '加载中...' : '加载更多' }}</button>
+    </div>
+
+    <div v-if="loading" style="display:flex;justify-content:center;padding:60px">
+      <div class="loading-spinner"></div>
+    </div>
+
+    <div v-if="!loading && articles.length === 0 && !isComplexType" class="empty-state">
+      <p>暂无文章</p>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useMessage } from 'naive-ui'
+import { invoke } from '@tauri-apps/api/core'
+import { network, store } from '@/api'
+import { getElements, getString } from '../../engine/core/rule-parser/index.js'
+import BackButton from '@/components/BackButton.vue'
+import type { RssSource, RssArticle } from '@shared/types'
+
+const route = useRoute()
+const router = useRouter()
+const message = useMessage()
+
+const source = ref<RssSource | null>(null)
+const articles = ref<RssArticle[]>([])
+const loading = ref(false)
+const loadingMore = ref(false)
+const activeSortName = ref('')
+const currentPageUrl = ref('')
+const hasNextPage = ref(false)
+const nextPageUrl = ref('')
+
+const complexSearchKey = ref('')
+const complexLoading = ref(false)
+const complexResult = ref('')
+const complexIframeSrc = ref('')
+const complexIframe = ref<HTMLIFrameElement | null>(null)
+let complexResolve: ((value: string) => void) | null = null
+
+const isComplexType = computed(() => !!(source.value?.startHtml))
+const articleStyle = computed(() => source.value?.articleStyle || 0)
+
+const sortTabs = computed(() => {
+  if (!source.value?.sortUrl) return []
+  return source.value.sortUrl.split('\n').filter(l => l.includes('::')).map(line => {
+    const idx = line.indexOf('::')
+    return { name: line.substring(0, idx), url: line.substring(idx + 2) }
+  })
+})
+
+const articleListClass = computed(() => {
+  switch (articleStyle.value) {
+    case 2: return 'article-grid'
+    case 1: return 'article-cards'
+    case 4: return 'article-grid-col3'
+    default: return 'article-list'
+  }
+})
+
+const articleItemClass = computed(() => {
+  if (articleStyle.value === 1) return 'card-item'
+  if (articleStyle.value === 2 || articleStyle.value === 4) return 'grid-item'
+  return ''
+})
+
+async function loadSource() {
+  try {
+    const data = await store.get('rssSources')
+    const sources: RssSource[] = Array.isArray(data) ? data : []
+    const sourceUrl = route.query.sourceUrl as string
+    source.value = sources.find(s => s.sourceUrl === sourceUrl) || null
+    if (source.value) {
+      const tabs = sortTabs.value
+      if (tabs.length > 0) {
+        activeSortName.value = tabs[0].name
+        currentPageUrl.value = tabs[0].url
+      } else {
+        currentPageUrl.value = source.value.sourceUrl
+      }
+    }
+  } catch { source.value = null }
+}
+
+function switchSort(tab: { name: string; url: string }) {
+  activeSortName.value = tab.name
+  currentPageUrl.value = tab.url
+  articles.value = []
+  hasNextPage.value = false
+  fetchArticles()
+}
+
+async function parseArticles(html: string): Promise<{ articles: RssArticle[]; nextUrl: string }> {
+  if (!source.value) return { articles: [], nextUrl: '' }
+  const baseCtx = { source: source.value, baseUrl: currentPageUrl.value || source.value.sourceUrl, book: {}, result: html }
+
+  let listRule = source.value.ruleArticles || ''
+  let reverse = false
+  if (listRule.startsWith('-')) { reverse = true; listRule = listRule.substring(1) }
+  if (listRule.startsWith('+')) { listRule = listRule.substring(1) }
+
+  const elements = await getElements(html, listRule, baseCtx)
+  if (!Array.isArray(elements) || elements.length === 0) return { articles: [], nextUrl: '' }
+
+  const titleRule = source.value.ruleTitle || ''
+  const linkRule = source.value.ruleLink || ''
+  const descRule = source.value.ruleDescription || ''
+  const imageRule = source.value.ruleImage || ''
+  const dateRule = source.value.rulePubDate || ''
+
+  const result: RssArticle[] = []
+  for (const item of elements) {
+    if (item === null || item === undefined) continue
+    let safeItem: any = item
+    try { safeItem = JSON.parse(JSON.stringify(item)) } catch {}
+    const itemCtx = { ...baseCtx, result: safeItem }
+
+    const title = await getString(safeItem, titleRule, itemCtx) || ''
+    if (!title) continue
+    const link = await getString(safeItem, linkRule, { ...itemCtx, isUrl: true }) || ''
+    const description = descRule ? await getString(safeItem, descRule, itemCtx) || null : null
+    const image = imageRule ? await getString(safeItem, imageRule, itemCtx) || null : null
+    const pubDate = dateRule ? await getString(safeItem, dateRule, itemCtx) || null : null
+    result.push({ title: String(title), link, description, image, pubDate, sort: activeSortName.value, origin: source.value!.sourceUrl })
+  }
+  if (reverse) result.reverse()
+
+  let nextUrl = ''
+  if (source.value.ruleNextPage) {
+    const nextRule = source.value.ruleNextPage
+    if (nextRule.toUpperCase() === 'PAGE') {
+      nextUrl = currentPageUrl.value
+    } else {
+      const raw = await getString(html, nextRule, { ...baseCtx, isUrl: true })
+      if (raw) nextUrl = raw
+    }
+  }
+  return { articles: result, nextUrl }
+}
+
+async function fetchArticles() {
+  if (!source.value || !currentPageUrl.value) return
+  loading.value = true
+  try {
+    const html = await network.fetch(currentPageUrl.value, { method: 'GET' })
+    const result = await parseArticles(typeof html === 'string' ? html : '')
+    articles.value = result.articles
+    hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== currentPageUrl.value
+    nextPageUrl.value = result.nextUrl
+  } catch (err: any) {
+    message.error('获取文章失败: ' + (err?.message || String(err)))
+  }
+  finally { loading.value = false }
+}
+
+async function loadNextPage() {
+  if (!nextPageUrl.value || loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const html = await network.fetch(nextPageUrl.value, { method: 'GET' })
+    const result = await parseArticles(typeof html === 'string' ? html : '')
+    articles.value = [...articles.value, ...result.articles]
+    hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== nextPageUrl.value
+    nextPageUrl.value = result.nextUrl
+  } catch (err: any) {
+    message.error('加载更多失败: ' + (err?.message || String(err)))
+  }
+  finally { loadingMore.value = false }
+}
+
+function openArticle(item: RssArticle) {
+  if (!item.link) return
+  if (source.value?.ruleContent) {
+    router.push({ name: 'rss-read', query: { articleLink: item.link, sourceUrl: source.value.sourceUrl } })
+  } else {
+    invoke('show_browser', { html: '', script: "window.location.href='" + item.link.replace(/'/g, "\\'") + "'", options: null }).catch(() => {})
+  }
+}
+
+// ─── 复杂类型 ───
+const END_HEAD = '</' + 'head>'
+const END_BODY = '</' + 'body>'
+const END_HTML = '</' + 'html>'
+const END_SCRIPT = '</' + 'script>'
+
+function buildComplexHtml(): string {
+  if (!source.value) return ''
+  const html = source.value.startHtml || ''
+  const style = source.value.startStyle ? '<style>' + source.value.startStyle + '</style>' : ''
+  const injectJs = '<script>window.importContent=function(){var r=document.getElementById("resultText");var u=r?r.value:"";if(!u){var ts=document.querySelectorAll("textarea");for(var i=0;i<ts.length;i++){if(ts[i].value&&ts[i].value.startsWith("http")){u=ts[i].value;break}}}window.parent.postMessage({type:"rss-complex-result",url:u},"*");};' + END_SCRIPT
+
+  if (html.includes('<head>')) return html.replace('<head>', '<head>' + style + injectJs)
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + style + injectJs + END_HEAD + '<body>' + html + '<script>' + (source.value.startJs || '') + END_SCRIPT + END_BODY + END_HTML
+}
+
+async function runComplexSearch() {
+  if (!source.value) return
+  complexLoading.value = true
+  complexResult.value = ''
+  const fullHtml = buildComplexHtml()
+  const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  complexIframeSrc.value = url
+  try {
+    const result = await new Promise<string>((resolve) => {
+      complexResolve = resolve
+      setTimeout(() => resolve(''), 60000)
+    })
+    complexResult.value = result
+  } finally {
+    complexLoading.value = false
+    URL.revokeObjectURL(url)
+    complexIframeSrc.value = ''
+  }
+}
+
+function onComplexIframeLoad() {
+  if (!complexIframe.value) return
+  try {
+    const iframeWin = complexIframe.value.contentWindow
+    if (!iframeWin) return
+    const js = source.value?.startJs
+    if (js) {
+      const cleanedJs = js.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
+      const script = iframeWin.document.createElement('script')
+      script.textContent = cleanedJs
+      iframeWin.document.body.appendChild(script)
+    }
+  } catch {}
+}
+
+function handleComplexMessage(e: MessageEvent) {
+  if (e.data?.type === 'rss-complex-result' && complexResolve) {
+    complexResolve(e.data.url || '')
+    complexResolve = null
+  }
+}
+
+async function openComplexInWebView() {
+  const fullHtml = buildComplexHtml()
+  try { await invoke('show_browser', { html: fullHtml, script: source.value?.startJs || null, options: null }) } catch {}
+}
+
+async function fetchWithComplexResult() {
+  if (!complexResult.value || !source.value) return
+  loading.value = true
+  try {
+    const html = await network.fetch(complexResult.value, { method: 'GET' })
+    const result = await parseArticles(typeof html === 'string' ? html : '')
+    articles.value = result.articles
+    hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== complexResult.value
+    nextPageUrl.value = result.nextUrl
+  } catch (err: any) { message.error('获取文章失败: ' + (err?.message || String(err))) }
+  finally { loading.value = false }
+}
+
+onMounted(async () => {
+  await loadSource()
+  if (source.value && !isComplexType.value) await fetchArticles()
+  window.addEventListener('message', handleComplexMessage)
+})
+
+onUnmounted(() => window.removeEventListener('message', handleComplexMessage))
+</script>
+
+<style scoped>
+.rss-articles-page { position: relative; z-index: 1; }
+.sort-tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; }
+.sort-tab { padding: 6px 14px; font-size: 13px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; transition: color 0.18s, border-color 0.18s; }
+.sort-tab:hover { color: var(--text-primary); border-color: var(--brand); }
+.sort-tab.active { color: var(--brand); border-color: var(--brand); background: var(--bg-active); }
+.complex-section { margin-bottom: 20px; }
+.search-row { display: flex; gap: 10px; align-items: center; }
+.article-list { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
+.article-cards { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.article-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.article-grid-col3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.article-item { display: flex; align-items: center; padding: 14px 18px; background: var(--bg-card); cursor: pointer; transition: background 0.18s; gap: 14px; min-height: 56px; }
+.article-item:hover { background: var(--bg-hover); }
+.card-item { flex-direction: column; border-radius: var(--radius-md); border: 1px solid var(--border-color); padding: 16px; }
+.grid-item { flex-direction: column; border-radius: var(--radius-md); border: 1px solid var(--border-color); padding: 12px; }
+.article-image { width: 60px; height: 60px; border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; }
+.card-item .article-image, .grid-item .article-image { width: 100%; height: 140px; }
+.article-content { flex: 1; min-width: 0; }
+.article-title { font-size: 15px; font-weight: 500; color: var(--text-primary); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.article-desc { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.article-date { font-size: 11px; color: var(--text-muted); margin: 2px 0 0; }
+</style>
+
+
+========================================
+=== src/pages/RssReader.vue ===
+========================================
+<template>
+  <div class="rss-reader-page">
+    <header class="reader-topbar">
+      <BackButton />
+      <h2 class="reader-title-text">{{ articleTitle }}</h2>
+    </header>
+
+    <div v-if="loading" style="display:flex;justify-content:center;padding:80px">
+      <div class="loading-spinner"></div>
+    </div>
+
+    <div v-else-if="content" class="reader-body" v-html="sanitizedContent"></div>
+
+    <div v-else class="empty-state" style="padding:80px">
+      <p>无法加载文章内容</p>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { useMessage } from 'naive-ui'
+import DOMPurify from 'isomorphic-dompurify'
+import { network, store } from '@/api'
+import { getString } from '../../engine/core/rule-parser/index.js'
+import BackButton from '@/components/BackButton.vue'
+import type { RssSource } from '@shared/types'
+
+const route = useRoute()
+const message = useMessage()
+
+const articleTitle = ref('加载中...')
+const content = ref('')
+const loading = ref(true)
+
+const sanitizedContent = computed(() => {
+  if (!content.value) return ''
+  const paragraphs = content.value.split(/\n\n+/).filter(p => p.trim())
+  const html = paragraphs.map(p => {
+    const trimmed = p.trim()
+    const withBreaks = trimmed.replace(/\n/g, '<br>')
+    return '<p style="text-indent:2em;margin:0 0 8px;line-height:1.8">' + withBreaks + '</p>'
+  }).join('')
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'a', 'blockquote', 'pre', 'code', 'ul', 'ol', 'li'],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style']
+  })
+})
+
+async function loadArticle() {
+  const articleLink = route.query.articleLink as string
+  const sourceUrl = route.query.sourceUrl as string
+
+  if (!articleLink) { loading.value = false; return }
+
+  try {
+    const data = await store.get('rssSources')
+    const sources: RssSource[] = Array.isArray(data) ? data : []
+    const source = sources.find(s => s.sourceUrl === sourceUrl)
+
+    const html = await network.fetch(articleLink, { method: 'GET' })
+    const rawHtml = typeof html === 'string' ? html : ''
+
+    if (source?.ruleContent) {
+      const ctx = { source, baseUrl: articleLink, book: {}, result: rawHtml }
+      const articleContent = await getString(rawHtml, source.ruleContent, ctx)
+      content.value = articleContent || ''
+    } else {
+      const bodyMatch = rawHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      content.value = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, '') : rawHtml.replace(/<[^>]+>/g, '')
+    }
+
+    if (source?.ruleTitle) {
+      const ctx = { source, baseUrl: articleLink, book: {}, result: rawHtml }
+      const title = await getString(rawHtml, source.ruleTitle, ctx)
+      if (title) articleTitle.value = title
+    } else {
+      const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+      articleTitle.value = titleMatch ? titleMatch[1].trim() : '文章'
+    }
+  } catch (err: any) {
+    message.error('加载文章失败: ' + (err?.message || String(err)))
+    articleTitle.value = '加载失败'
+  }
+  finally { loading.value = false }
+}
+
+onMounted(() => { loadArticle() })
+</script>
+
+<style scoped>
+.rss-reader-page { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+.reader-topbar { display: flex; align-items: center; gap: 16px; padding: 0 0 20px; border-bottom: 1px solid var(--border-color); margin-bottom: 24px; flex-shrink: 0; }
+.reader-title-text { font-size: 20px; font-weight: 600; color: var(--text-primary); margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-body { flex: 1; overflow-y: auto; padding: 0 4px; font-size: 15px; color: var(--text-primary); line-height: 1.8; }
+</style>
+
+
+========================================
+=== src/components/DownloadConfirm.vue ===
+========================================
+<template>
+  <n-modal
+    v-model:show="visible"
+    preset="dialog"
+    :title="title"
+    :positive-text="positiveText"
+    :negative-text="negativeText"
+    @positive-click="handleConfirm"
+    @negative-click="visible = false"
+    :closable="false"
+    :close-on-esc="false"
+    :mask-closable="false"
+  >
+    <p style="color:var(--text-secondary);font-size:14px;line-height:1.6;white-space:pre-wrap">{{ message }}</p>
+  </n-modal>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useMessage, NModal } from 'naive-ui'
+import { executeDownloadImport } from '../../engine/business/rss-download.js'
+
+const message = useMessage()
+
+const visible = ref(false)
+const title = ref('')
+const msg = ref('')
+const positiveText = ref('')
+const negativeText = ref('取消')
+let pendingData: any = null
+
+function show(info: any) {
+  pendingData = info
+  negativeText.value = '取消'
+  switch (info.resourceType) {
+    case 'bookSource':
+      title.value = '安装书源'
+      msg.value = `检测到 ${info.count} 个书源\n来自: ${info.url}\n是否安装？`
+      positiveText.value = '安装'
+      break
+    case 'rssSource':
+      title.value = '安装订阅源'
+      msg.value = `检测到 ${info.count} 个订阅源\n来自: ${info.url}\n是否安装？`
+      positiveText.value = '安装'
+      break
+    case 'replaceRule':
+      title.value = '导入替换规则'
+      msg.value = `检测到替换规则\n来自: ${info.url}\n是否导入？`
+      positiveText.value = '导入'
+      break
+    case 'txtTocRule':
+      title.value = '导入目录规则'
+      msg.value = `检测到 TXT 目录规则\n来自: ${info.url}\n是否导入？`
+      positiveText.value = '导入'
+      break
+    case 'purifyRule':
+      title.value = '导入净化规则'
+      msg.value = `检测到净化规则\n来自: ${info.url}\n是否导入？`
+      positiveText.value = '导入'
+      break
+    default:
+      title.value = '下载完成'
+      msg.value = `未识别的资源类型，已保存到下载目录:\n${info.savedPath || info.url}`
+      positiveText.value = '知道了'
+      negativeText.value = ''
+      break
+  }
+  visible.value = true
+}
+
+async function handleConfirm() {
+  if (!pendingData) { visible.value = false; return }
+  try {
+    const result = await executeDownloadImport({ url: pendingData.url, resourceType: pendingData.resourceType } as any)
+    message.success(result)
+  } catch (err: any) {
+    message.error(err?.message || '操作失败')
+  }
+  visible.value = false
+}
+
+defineExpose({ show })
+</script>
+
+
+========================================
+=== engine/business/rss-download.ts ===
+========================================
+// ============================================
+// RSS 下载检测与导入
+// ============================================
+
+import { network, store, source as sourceApi } from '../../src/api/index.js'
+
+export interface DownloadInfo {
+  url: string
+  resourceType: string
+}
+
+export async function executeDownloadImport(info: DownloadInfo): Promise<string> {
+  switch (info.resourceType) {
+    case 'bookSource': {
+      const count = await installBookSources(info.url)
+      return `已安装 ${count} 个书源`
+    }
+    case 'rssSource': {
+      const existingSources = (await store.get('rssSources')) || []
+      const count = await installRssSources(info.url, existingSources)
+      await store.set('rssSources', existingSources)
+      return `已安装 ${count} 个订阅源`
+    }
+    case 'replaceRule': {
+      const count = await installReplaceRules(info.url)
+      return `已导入 ${count} 条替换规则`
+    }
+    case 'txtTocRule': {
+      const count = await installTxtTocRules(info.url)
+      return `已导入 ${count} 条目录规则`
+    }
+    case 'purifyRule': {
+      await installPurifyRule(info.url)
+      return '已导入净化规则'
+    }
+    default:
+      return '文件已保存到下载目录'
+  }
+}
+
+async function installBookSources(url: string): Promise<number> {
+  const content = await network.fetch(url, { method: 'GET' })
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
+  const data = JSON.parse(text)
+  const items = Array.isArray(data) ? data : [data]
+  for (const item of items) {
+    await sourceApi.add(JSON.stringify(item))
+  }
+  return items.length
+}
+
+async function installRssSources(url: string, existingSources: any[]): Promise<number> {
+  const content = await network.fetch(url, { method: 'GET' })
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
+  const data = JSON.parse(text)
+  const items = Array.isArray(data) ? data : [data]
+  let count = 0
+  const existing = new Set(existingSources.map((s: any) => s.sourceUrl))
+  for (const item of items) {
+    if (item.sourceUrl && !existing.has(item.sourceUrl)) {
+      existingSources.push(item)
+      existing.add(item.sourceUrl)
+      count++
+    }
+  }
+  return count
+}
+
+async function installReplaceRules(url: string): Promise<number> {
+  const content = await network.fetch(url, { method: 'GET' })
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
+  const rules = JSON.parse(text)
+  const existing: any[] = (await store.get('replaceRule')) || []
+  const incoming = Array.isArray(rules) ? rules : [rules]
+  let count = 0
+  for (const rule of incoming) {
+    if (!existing.find((r: any) => r.name === rule.name && r.pattern === rule.pattern)) {
+      existing.push(rule)
+      count++
+    }
+  }
+  if (count > 0) await store.set('replaceRule', existing)
+  return count
+}
+
+async function installTxtTocRules(url: string): Promise<number> {
+  const content = await network.fetch(url, { method: 'GET' })
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
+  const rules = JSON.parse(text)
+  const items = Array.isArray(rules) ? rules : [rules]
+  await store.set('txtTocRule', items)
+  return items.length
+}
+
+async function installPurifyRule(url: string): Promise<void> {
+  const content = await network.fetch(url, { method: 'GET' })
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
+  await store.set('purifyRule', text)
+}
+
+
+========================================
+=== src/App.vue ===
+========================================
+<template>
+  <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+    <n-message-provider>
+      <n-notification-provider>
+        <n-dialog-provider>
+          <div class="app-shell" :data-theme="effectiveTheme">
+            <div class="titlebar" :data-theme="effectiveTheme" @dblclick="toggleMaximize">
+              <div class="titlebar-drag"></div>
+              <div class="titlebar-controls">
+                <button class="titlebar-btn" @click="minimizeWindow" title="最小化">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><line x1="3" y1="7" x2="11" y2="7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                </button>
+                <button class="titlebar-btn" @click="toggleMaximize" :title="isMaximized ? '还原' : '最大化'">
+                  <svg v-if="!isMaximized" width="14" height="14" viewBox="0 0 14 14"><rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
+                  <svg v-else width="14" height="14" viewBox="0 0 14 14"><rect x="4.5" y="2" width="7.5" height="7.5" rx="1.5" stroke="currentColor" stroke-width="1.3" fill="none"/><rect x="2" y="4.5" width="7.5" height="7.5" rx="1.5" stroke="currentColor" stroke-width="1.3" fill="var(--bg-card)"/></svg>
+                </button>
+                <button class="titlebar-btn titlebar-btn-close" @click="closeWindow" title="关闭">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="app-body">
+              <nav class="app-sidebar" aria-label="主导航">
+                <div class="sidebar-logo">
+                  <img src="/icons/icon.svg" alt="墨阅" class="logo-icon" />
+                  <span class="logo-text">墨阅</span>
+                </div>
+                <div class="sidebar-menu" role="navigation">
+                  <div v-for="item in navItems" :key="item.route" class="nav-item" :class="{ active: currentRoute === item.route }" role="button" @click="navigate(item.route)">
+                    <n-icon :size="20" class="nav-icon"><component :is="item.icon" /></n-icon>
+                    <span class="nav-label">{{ item.label }}</span>
+                  </div>
+                </div>
+                <div class="sidebar-footer">
+                  <div class="footer-version">v{{ appVersion }}</div>
+                </div>
+              </nav>
+
+              <main class="app-main">
+                <router-view v-slot="{ Component }">
+                  <transition name="page" mode="out-in">
+                    <component :is="Component" />
+                  </transition>
+                </router-view>
+
+                <BookDetail v-if="bookshelfStore.showDetail" :book="bookshelfStore.detailBook ? JSON.parse(JSON.stringify(bookshelfStore.detailBook)) : null" :source="bookshelfStore.detailSource ? JSON.parse(JSON.stringify(bookshelfStore.detailSource)) : null" @close="bookshelfStore.closeDetail()" />
+                <Reader v-if="bookshelfStore.showReader" :book="bookshelfStore.readerBook ? JSON.parse(JSON.stringify(bookshelfStore.readerBook)) : null" :source="bookshelfStore.readerSource ? JSON.parse(JSON.stringify(bookshelfStore.readerSource)) : null" :initial-chapters="bookshelfStore.readerChapters" @close="bookshelfStore.closeReader()" />
+                <PhotoViewer ref="photoViewer" />
+              </main>
+            </div>
+          </div>
+          <DownloadConfirm ref="downloadConfirm" />
+        </n-dialog-provider>
+      </n-notification-provider>
+    </n-message-provider>
+  </n-config-provider>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { onLog, initLogBridge } from '../engine/event/index.js'
+import PhotoViewer from './components/PhotoViewer.vue'
+import DownloadConfirm from './components/DownloadConfirm.vue'
+import { darkTheme, lightTheme, zhCN, dateZhCN, NIcon } from 'naive-ui'
+import { BookOutline, SearchOutline, CompassOutline, ShareSocialOutline, SettingsOutline, AppsOutline } from '@vicons/ionicons5'
+import { useBookshelfStore, useReadingStore } from '@/store'
+import { ROUTES, APP_VERSION } from '@shared/constants'
+import BookDetail from '@/components/BookDetail.vue'
+import Reader from '@/components/Reader.vue'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
+
+const route = useRoute()
+const router = useRouter()
+const bookshelfStore = useBookshelfStore()
+const readingStore = useReadingStore()
+const currentRoute = computed(() => route.name)
+
+const currentTheme = computed({ get: () => readingStore.theme, set: (val: string) => readingStore.setTheme(val) })
+
+const appVersion = APP_VERSION
+const effectiveTheme = ref('dark')
+const photoViewer = ref<InstanceType<typeof PhotoViewer> | null>(null)
+const isMaximized = ref(false)
+const downloadConfirm = ref<InstanceType<typeof DownloadConfirm> | null>(null)
+
+function resolveEffectiveTheme(theme: string): string {
+  if (theme === 'system') return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  return theme
+}
+
+function applyThemeToDOM(theme: string) {
+  const resolved = resolveEffectiveTheme(theme)
+  document.documentElement.setAttribute('data-theme', resolved)
+  effectiveTheme.value = resolved
+}
+
+function setTheme(theme: string) {
+  readingStore.setTheme(theme)
+  applyThemeToDOM(theme)
+}
+
+const naiveTheme = computed(() => {
+  const t = resolveEffectiveTheme(currentTheme.value)
+  return t === 'dark' || t === 'sepia' ? darkTheme : lightTheme
+})
+
+const themeOverrides = { common: { primaryColor: '#d4a017', primaryColorHover: '#e8c547', primaryColorPressed: '#b8860b', primaryColorSuppl: '#d4a017' } }
+
+const navItems = [
+  { route: ROUTES.BOOKSHELF, icon: BookOutline, label: '书架' },
+  { route: ROUTES.SEARCH, icon: SearchOutline, label: '搜索' },
+  { route: ROUTES.EXPLORE, icon: CompassOutline, label: '发现' },
+  { route: 'rss', icon: ShareSocialOutline, label: '订阅' },
+  { route: ROUTES.SOURCES, icon: AppsOutline, label: '书源管理' },
+  { route: ROUTES.SETTINGS, icon: SettingsOutline, label: '设置' },
+]
+
+function navigate(routeName: string) { if (routeName !== currentRoute.value) router.push({ name: routeName }).catch(() => {}) }
+function minimizeWindow() { getCurrentWindow().minimize() }
+
+async function toggleMaximize() {
+  const win = getCurrentWindow()
+  if (await win.isMaximized()) { await win.unmaximize() }
+  else { await win.maximize() }
+}
+
+async function updateMaximizedState() {
+  const win = getCurrentWindow()
+  isMaximized.value = await win.isMaximized()
+}
+
+function closeWindow() { getCurrentWindow().close() }
+function handleSystemThemeChange() { if (currentTheme.value === 'system') applyThemeToDOM('system') }
+
+let mediaQuery: MediaQueryList | null = null
+let unlisten: (() => void) | null = null
+
+onMounted(async () => {
+  await initLogBridge()
+  await readingStore.loadSettings()
+  applyThemeToDOM(currentTheme.value)
+  mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+  mediaQuery.addEventListener('change', handleSystemThemeChange)
+  await updateMaximizedState()
+  window.addEventListener('resize', updateMaximizedState)
+
+  unlisten = await listen<any>('rss-download', (event) => {
+    if (event.payload.error) {
+      downloadConfirm.value?.show({ resourceType: 'error', message: event.payload.message })
+      return
+    }
+    downloadConfirm.value?.show(event.payload)
+  })
+})
+
+onUnmounted(() => {
+  if (mediaQuery) mediaQuery.removeEventListener('change', handleSystemThemeChange)
+  window.removeEventListener('resize', updateMaximizedState)
+  if (unlisten) unlisten()
+})
+
+watch(currentTheme, val => applyThemeToDOM(val))
+</script>
+
+<style scoped>
+.app-shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; background: var(--bg-card); color: var(--text-primary); transition: background 0.3s ease, color 0.3s ease; }
+.titlebar { display: flex; align-items: stretch; height: 40px; min-height: 40px; background: var(--bg-card); flex-shrink: 0; z-index: 20; }
+.titlebar-drag { flex: 1; height: 100%; user-select: none; -webkit-app-region: drag; }
+.titlebar-controls { display: flex; gap: 0; flex-shrink: 0; height: 100%; -webkit-app-region: no-drag; }
+.titlebar-btn { width: 46px; height: 100%; border: none; background: transparent; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s; }
+.titlebar-btn svg { opacity: 0.7; }
+.titlebar-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.titlebar-btn:hover svg { opacity: 1; }
+.titlebar-btn-close:hover { background: #c0392b; color: #fff; }
+.app-body { display: flex; flex: 1; height: calc(100vh - 40px); overflow: hidden; }
+.app-sidebar { display: flex; flex-direction: column; width: 200px; min-width: 200px; padding: 20px 16px; background: var(--bg-card); border-right: 1px solid var(--border-color); flex-shrink: 0; height: 100%; box-sizing: border-box; }
+.sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 0 8px 28px; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
+.logo-icon { width: 28px; height: 28px; flex-shrink: 0; }
+.logo-text { font-size: 16px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.04em; }
+.sidebar-menu { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-md); cursor: pointer; min-height: 44px; transition: background 0.2s, color 0.2s; color: var(--text-muted); }
+.nav-item:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.nav-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
+.nav-item.active .nav-icon { color: var(--brand); }
+.nav-icon { flex-shrink: 0; }
+.nav-label { font-size: 14px; font-weight: 500; }
+.sidebar-footer { padding-top: 16px; border-top: 1px solid var(--border-color); margin-top: auto; text-align: center; }
+.footer-version { font-size: 12px; color: var(--text-muted); opacity: 0.45; }
+.app-main { flex: 1; position: relative; overflow-y: auto; padding: 32px 40px 40px; background: var(--bg); min-width: 0; height: 100%; box-sizing: border-box; }
+.page-enter-active, .page-leave-active { transition: opacity 0.3s ease, transform 0.3s ease; }
+.page-enter-from { opacity: 0; transform: translateY(8px); }
+.page-leave-to { opacity: 0; transform: translateY(-6px); }
+</style>
+
+
+========================================
+=== src/router/index.ts ===
+========================================
+import { createRouter, createWebHashHistory } from 'vue-router'
+import Bookshelf from '../pages/Bookshelf.vue'
+import Search from '../pages/Search.vue'
+import Explore from '../pages/Explore.vue'
+import RssSources from '../pages/RssSources.vue'
+import RssArticles from '../pages/RssArticles.vue'
+import RssReader from '../pages/RssReader.vue'
+import Settings from '../pages/Settings.vue'
+import SourceManager from '../pages/SourceManager.vue'
+import Appearance from '../pages/settings/Appearance.vue'
+import Reading from '../pages/settings/Reading.vue'
+import Data from '../pages/settings/Data.vue'
+import WebDAV from '../pages/settings/WebDAV.vue'
+import About from '../pages/settings/About.vue'
+import ReplaceRules from '../pages/settings/ReplaceRules.vue'
+import Network from '../pages/settings/Network.vue'
+import TxtTocRule from '../pages/settings/TxtTocRule.vue'
+import DictRule from '../pages/settings/DictRule.vue'
+
+const routes = [
+  { path: '/', redirect: '/bookshelf' },
+  { path: '/bookshelf', name: 'bookshelf', component: Bookshelf },
+  { path: '/search', name: 'search', component: Search },
+  { path: '/explore', name: 'explore', component: Explore },
+  { path: '/rss', name: 'rss', component: RssSources },
+  { path: '/rss/articles', name: 'rss-articles', component: RssArticles },
+  { path: '/rss/read', name: 'rss-read', component: RssReader },
+  { path: '/sources', name: 'sources', component: SourceManager },
+  { path: '/settings', name: 'settings', component: Settings },
+  { path: '/settings/appearance', name: 'appearance', component: Appearance },
+  { path: '/settings/reading', name: 'reading', component: Reading },
+  { path: '/settings/data', name: 'data', component: Data },
+  { path: '/settings/webdav', name: 'webdav', component: WebDAV },
+  { path: '/settings/replaceRules', name: 'replaceRules', component: ReplaceRules },
+  { path: '/settings/txtTocRule', name: 'txtTocRule', component: TxtTocRule },
+  { path: '/settings/dictRule', name: 'dictRule', component: DictRule },
+  { path: '/settings/network', name: 'network', component: Network },
+  { path: '/settings/about', name: 'about', component: About },
+]
+
+export const router = createRouter({
+  history: createWebHashHistory(),
+  routes,
+})
+
+
+========================================
+=== src/shared/types.ts ===
+========================================
+// ============================================
+// 共享类型定义 — 完全对齐 legado
+// ============================================
+
+export interface Book {
+  name: string
+  author: string
+  bookUrl: string
+  coverUrl?: string | null
+  intro?: string | null
+  kind?: string | null
+  lastChapter?: string | null
+  latestChapterTitle?: string | null
+  tocUrl?: string | null
+  origin?: string
+  originName?: string
+  originOrder?: number
+  group?: number
+  order?: number
+  type?: number
+  canUpdate?: boolean
+  durChapterIndex?: number
+  durChapterPos?: number
+  durChapterTime?: number
+  durChapterTitle?: string
+  lastCheckCount?: number
+  lastCheckTime?: number
+  latestChapterTime?: number
+  totalChapterNum?: number
+  wordCount?: string
+  readConfig?: any
+  variable?: string
+  syncTime?: number
+}
+
+export interface Chapter {
+  id: number
+  title: string
+  url: string
+  index: number
+  isVip?: boolean
+  isPay?: boolean
+  content?: string | null
+  updateTime?: string
+  _deferredJs?: string
+  _deferredResult?: any
+}
+
+export interface ReadingProgress {
+  bookUrl: string
+  chapterId: number
+  chapterTitle: string
+  scrollPercent: number
+  updatedAt: string
+}
+
+export interface SearchRule {
+  bookList?: string | null
+  name?: string | null
+  author?: string | null
+  bookUrl?: string | null
+  coverUrl?: string | null
+  intro?: string | null
+  kind?: string | null
+  lastChapter?: string | null
+  wordCount?: string | null
+  checkKeyWord?: string | null
+}
+
+export interface BookInfoRule {
+  init?: string | null
+  name?: string | null
+  author?: string | null
+  coverUrl?: string | null
+  intro?: string | null
+  kind?: string | null
+  lastChapter?: string | null
+  tocUrl?: string | null
+  wordCount?: string | null
+}
+
+export interface TocRule {
+  preUpdateJs?: string | null
+  chapterList?: string | null
+  chapterName?: string | null
+  chapterUrl?: string | null
+  formatJs?: string | null
+  isVolume?: string | null
+  isVip?: string | null
+  isPay?: string | null
+  updateTime?: string | null
+  nextTocUrl?: string | null
+}
+
+export interface ContentRule {
+  content?: string | null
+  subContent?: string | null
+  title?: string | null
+  nextContentUrl?: string | null
+  webJs?: string | null
+  sourceRegex?: string | null
+  replaceRegex?: string | null
+  imageStyle?: string | null
+  imageDecode?: string | null
+  payAction?: string | null
+  callBackJs?: string | null
+}
+
+export interface ExploreRule {
+  bookList?: string | null
+  name?: string | null
+  author?: string | null
+  bookUrl?: string | null
+  coverUrl?: string | null
+  intro?: string | null
+  kind?: string | null
+  lastChapter?: string | null
+  wordCount?: string | null
+  updateTime?: string | null
+}
+
+export interface BookSource {
+  bookSourceName: string
+  bookSourceUrl: string
+  bookSourceGroup?: string | null
+  bookSourceComment?: string | null
+  bookSourceType?: number
+  searchUrl?: string
+  ruleSearch?: SearchRule
+  ruleBookInfo?: BookInfoRule
+  ruleToc?: TocRule
+  ruleContent?: ContentRule
+  ruleExplore?: ExploreRule | null
+  exploreUrl?: string | null
+  header?: string | null
+  enabled: boolean
+  enabledCookieJar?: boolean
+  enabledExplore?: boolean
+  weight?: number
+  customOrder?: number
+  concurrentRate?: string | null
+  jsLib?: string | null
+  loginUrl?: string | null
+  loginUi?: string | null
+  loginCheckJs?: string | null
+  respondTime?: number
+  lastUpdateTime?: number
+  bookUrlPattern?: string | null
+  customButton?: boolean
+  eventListener?: boolean
+  code?: string | null
+  callBackJs?: string | null
+  [key: string]: any
+}
+
+export interface ReplaceRule {
+  id: string
+  name: string
+  pattern: string
+  replacement: string
+  isRegex: boolean
+  isEnabled: boolean
+  scope: 'title' | 'content'
+  bookName: string
+  bookOrigin: string
+  timeoutMs: number
+}
+
+// ─── 订阅源 ───
+export interface RssSource {
+  sourceName: string
+  sourceUrl: string
+  sourceIcon?: string | null
+  sourceGroup?: string | null
+  sourceComment?: string | null
+  sortUrl?: string | null
+  ruleArticles?: string | null
+  ruleTitle?: string | null
+  ruleLink?: string | null
+  rulePubDate?: string | null
+  ruleDescription?: string | null
+  ruleImage?: string | null
+  ruleNextPage?: string | null
+  ruleContent?: string | null
+  style?: string | null
+  singleUrl?: boolean
+  articleStyle?: number
+  enabled: boolean
+  enabledCookieJar?: boolean
+  customOrder?: number
+  type?: number
+  enableJs?: boolean
+  loadWithBaseUrl?: boolean
+  startHtml?: string | null
+  startJs?: string | null
+  startStyle?: string | null
+  injectJs?: string | null
+  header?: string | null
+  jsLib?: string | null
+  loginUrl?: string | null
+  loginUi?: string | null
+  loginCheckJs?: string | null
+  [key: string]: any
+}
+
+export interface RssArticle {
+  title: string
+  link: string
+  description?: string | null
+  image?: string | null
+  pubDate?: string | null
+  sort?: string
+  origin?: string
+  read?: boolean
+}
+
+
+========================================
+=== src-tauri/src/commands/fetch_url.rs ===
+========================================
+use crate::error::Result;
+use crate::network::http::execute_http_request;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::fs;
+use serde::Serialize;
+use tauri::Manager;
+use tauri::Emitter;
+use tauri::WebviewWindowBuilder;
+use tauri::Listener;
+use tauri::WebviewUrl;
+use tokio::sync::oneshot;
+use tokio::time::timeout;
+use std::time::Duration;
+
+const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+static IMAGE_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+pub fn set_image_cache_dir(dir: PathBuf) { let _ = IMAGE_CACHE_DIR.set(dir); }
+fn get_cache_dir() -> PathBuf { IMAGE_CACHE_DIR.get().cloned().unwrap_or_else(|| std::env::temp_dir().join("abyss_image_cache")) }
+fn clean_old_cache(dir: &PathBuf, max_files: usize) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        if files.len() > max_files {
+            files.sort_by_key(|e| e.metadata().map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)).unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+            let to_remove = files.len() - max_files;
+            for entry in files.iter().take(to_remove) { let _ = fs::remove_file(entry.path()); }
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct FetchResponse { pub status: u16, pub data: String, }
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn fetch_url(
+    app: tauri::AppHandle, url: String, method: Option<String>, body: Option<String>,
+    headers: Option<HashMap<String, String>>, charset: Option<String>,
+    useWebview: Option<bool>, webJs: Option<String>, timeoutSecs: Option<u64>, sourceType: Option<i32>,
+) -> Result<String> {
+    if useWebview.unwrap_or(false) {
+        fetch_webview_inner(&app, &url, headers, webJs, timeoutSecs.unwrap_or(30), sourceType).await
+    } else {
+        let method_str = method.unwrap_or_else(|| "GET".into());
+        let timeout = timeoutSecs.unwrap_or(30);
+        execute_http_request(&url, &method_str, headers, body, charset, timeout).await
+    }
+}
+
+async fn fetch_webview_inner(
+    app: &tauri::AppHandle, url: &str, headers: Option<HashMap<String, String>>,
+    web_js: Option<String>, timeout_secs: u64, source_type: Option<i32>,
+) -> Result<String> {
+    let parsed_url = url::Url::parse(url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let window_label = format!("webview_{}", uuid::Uuid::new_v4());
+    let is_comic = source_type == Some(2);
+    let is_novel = source_type == Some(0) || source_type.is_none();
+    let block_script = if is_novel {
+        r#"(function(){var o=new MutationObserver(function(){document.querySelectorAll('img,picture,source').forEach(function(e){e.remove()})});o.observe(document.documentElement,{childList:true,subtree:true});var l=new MutationObserver(function(){document.querySelectorAll('link[rel="stylesheet"],link[rel="preload"],link[rel="prefetch"],link[rel="font"]').forEach(function(e){e.remove()})});l.observe(document.documentElement,{childList:true,subtree:true});var s=new MutationObserver(function(){document.querySelectorAll('script:not([type="application/json"])').forEach(function(e){e.remove()})});s.observe(document.documentElement,{childList:true,subtree:true})})()"#
+    } else if is_comic {
+        r#"(function(){document.querySelectorAll('link[rel="font"],link[rel="preload"][as="font"]').forEach(function(e){e.remove()});document.querySelectorAll('script:not([data-main]):not([src*="lazyload"])').forEach(function(e){e.remove()});document.querySelectorAll('img[data-src],img[data-original]').forEach(function(e){var s=e.getAttribute('data-src')||e.getAttribute('data-original');if(s)e.setAttribute('src',s)})})()"#
+    } else { "" };
+    let mut builder = WebviewWindowBuilder::new(app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(false).focused(false).skip_taskbar(true).title("").user_agent(DEFAULT_UA);
+    if let Some(h) = &headers { if let Some(ua) = h.get("User-Agent") { builder = builder.user_agent(ua); } }
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    if !block_script.is_empty() { let _ = window.eval(block_script); }
+    let write_js = if let Some(js) = &web_js {
+        format!("window.name = (function(){{ return {}; }})();", js)
+    } else if is_comic {
+        r#"window.name=(function(){var u=[];document.querySelectorAll('img,picture source').forEach(function(e){var s=e.getAttribute('src')||e.getAttribute('data-src')||e.getAttribute('data-original');if(s&&s.startsWith('http'))u.push(s)});return JSON.stringify(Array.from(new Set(u)))})();"#.to_string()
+    } else {
+        r#"document.querySelectorAll('script,style,link,iframe,noscript,meta').forEach(function(el){el.remove()});window.name=JSON.stringify(document.documentElement.outerHTML);"#.to_string()
+    };
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let wf = window.clone(); let jsf = write_js.clone(); let txc = tx_shared.clone();
+    std::thread::spawn(move || {
+        let wait = if is_comic { 3000u64 } else { 2000u64 };
+        std::thread::sleep(Duration::from_millis(wait));
+        let w = wf.clone();
+        let _ = wf.run_on_main_thread(move || {
+            let _ = w.eval(&jsf);
+            std::thread::sleep(Duration::from_millis(200));
+            let w2 = w.clone();
+            let _ = w.eval_with_callback("window.name || ''", move |r| {
+                let mut g = txc.lock().unwrap();
+                if let Some(s) = g.take() { let _ = s.send(r); }
+                let _ = w2.close();
+            });
+        });
+    });
+    match timeout(Duration::from_secs(timeout_secs), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("{}", e))) }
+        Err(_) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("超时".into())) }
+    }
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn login_webview(app: tauri::AppHandle, url: String, title: Option<String>, timeoutSecs: Option<u64>) -> Result<String> {
+    let parsed_url = url::Url::parse(&url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let window_label = format!("login_{}", uuid::Uuid::new_v4());
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let builder = WebviewWindowBuilder::new(&app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(true).focused(true).skip_taskbar(false).title(&title.unwrap_or_else(|| "登录".into())).user_agent(DEFAULT_UA);
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    let tx_clone = tx_shared.clone();
+    let _id = window.listen("tauri://destroyed", move |_| {
+        let cj = crate::js_runtime::ops::get_cookies_json();
+        let mut g = tx_clone.lock().unwrap();
+        if let Some(s) = g.take() { let _ = s.send(cj); }
+    });
+    match timeout(Duration::from_secs(timeoutSecs.unwrap_or(300)), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("{}", e))) }
+        Err(_) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("超时".into())) }
+    }
+}
+
+#[tauri::command]
+pub async fn show_browser(app: tauri::AppHandle, html: String, script: Option<String>, _options: Option<String>) -> Result<String> {
+    let window_label = format!("browser_{}", uuid::Uuid::new_v4());
+    let data_url = format!("data:text/html;charset=utf-8,{}", urlencoding::encode(&html));
+    let parsed_url = url::Url::parse(&data_url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 data URL: {}", e)))?;
+    let builder = WebviewWindowBuilder::new(&app, &window_label, tauri::WebviewUrl::External(parsed_url))
+        .visible(true).focused(true).skip_taskbar(false).title("").user_agent(DEFAULT_UA);
+    let window = builder.build().map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    if let Some(js) = script { let _ = window.eval(&js); }
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let tc = tx_shared.clone();
+    let _id = window.listen("tauri://destroyed", move |_| {
+        let mut g = tc.lock().unwrap();
+        if let Some(s) = g.take() { let _ = s.send("closed".into()); }
+    });
+    match timeout(Duration::from_secs(600), rx).await {
+        Ok(inner) => { let _ = window.close(); inner.map_err(|e| crate::error::AbyssError::WebViewError(format!("{}", e))) }
+        Err(_) => { let _ = window.close(); Err(crate::error::AbyssError::WebViewError("超时".into())) }
+    }
+}
+
+fn get_downloads_dir() -> PathBuf {
+    dirs_next::download_dir().unwrap_or_else(|| std::env::temp_dir().join("abyss_downloads"))
+}
+
+fn detect_resource_type(data: &str, url: &str) -> String {
+    if data.contains("\"bookSourceUrl\"") || data.contains("\"bookSourceName\"") { return "bookSource".into() }
+    if data.contains("\"sourceUrl\"") && data.contains("\"sourceName\"") { return "rssSource".into() }
+    if data.contains("\"isRegex\"") || (data.contains("\"pattern\"") && data.contains("\"replacement\"")) { return "replaceRule".into() }
+    if data.contains("\"chapterList\"") || data.contains("\"chapterName\"") { return "txtTocRule".into() }
+    if url.ends_with(".txt") && !data.starts_with("{") && !data.starts_with("[") { return "purifyRule".into() }
+    "unknown".into()
+}
+
+fn parse_json_count(data: &str) -> usize {
+    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(data) { return arr.len() }
+    if serde_json::from_str::<serde_json::Value>(data).is_ok() { return 1 }
+    0
+}
+
+#[derive(Serialize, Clone)]
+struct DownloadInfo {
+    url: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+    #[serde(rename = "fileSize")]
+    file_size: usize,
+    #[serde(rename = "resourceType")]
+    resource_type: String,
+    count: usize,
+    #[serde(rename = "savedPath")]
+    saved_path: Option<String>,
+    error: Option<bool>,
+    message: Option<String>,
+}
+
+async fn download_and_detect(url: &str) -> std::result::Result<DownloadInfo, String> {
+    let data = execute_http_request(url, "GET", None, None, None, 30)
+        .await
+        .map_err(|e| format!("下载失败: {}", e))?;
+    let bytes = data.into_bytes();
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    let file_name = url.split('/').last().unwrap_or("download").to_string();
+    let resource_type = detect_resource_type(&text, url);
+    let count = if resource_type == "bookSource" || resource_type == "rssSource" { parse_json_count(&text) } else { 0 };
+    let saved_path = if resource_type == "unknown" || url.ends_with(".zip") {
+        let dir = get_downloads_dir();
+        fs::create_dir_all(&dir).ok();
+        let path = dir.join(&file_name);
+        fs::write(&path, &bytes).ok();
+        Some(path.to_string_lossy().to_string())
+    } else { None };
+    Ok(DownloadInfo { url: url.to_string(), file_name, file_size: bytes.len(), resource_type, count, saved_path, error: None, message: None })
+}
+
+fn show_loading(window: &tauri::WebviewWindow) {
+    let _ = window.eval(r#"(function(){var m=document.createElement('div');m.id='__rss_loading';m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:99999;color:#fff;font-size:16px;font-family:system-ui';m.innerHTML='<div style="text-align:center"><div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.2);border-top-color:#d4a017;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px"></div><div>正在下载...</div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';document.body.appendChild(m);})()"#);
+}
+fn hide_loading(window: &tauri::WebviewWindow) {
+    let _ = window.eval("(function(){var m=document.getElementById('__rss_loading');if(m)m.remove()})()");
+}
+
+fn is_download_url(url: &str) -> bool {
+    url.ends_with(".json") || url.ends_with(".zip") || url.ends_with(".txt")
+        || url.starts_with("yuedu://")
+}
+
+fn should_open_in_new_window(url: &str) -> bool {
+    let http = url.starts_with("http://") || url.starts_with("https://");
+    http && !is_download_url(url)
+}
+
+#[tauri::command]
+pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> Result<()> {
+    let parsed_url = url::Url::parse(&url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let label = format!("rss_{}", uuid::Uuid::new_v4());
+    let (pos_x, pos_y, win_w, win_h) = if let Some(main) = app.get_webview_window("main") {
+        let p = main.outer_position().unwrap_or_default();
+        let s = main.outer_size().unwrap_or_default();
+        (p.x as f64, p.y as f64, s.width as f64, s.height as f64)
+    } else { (0.0, 0.0, 1000.0, 700.0) };
+    let w = (win_w * 0.9).max(600.0);
+    let h = (win_h * 0.9).max(400.0);
+    let x = pos_x + (win_w - w) / 2.0;
+    let y = pos_y + (win_h - h) / 2.0;
+
+    let app_nav = app.clone(); let label_nav = label.clone();
+    let app_win = app.clone(); let label_win = label.clone();
+    let app_new = app.clone();
+
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed_url.clone()))
+        .title(&title).inner_size(w, h).position(x.max(0.0), y.max(0.0))
+        .decorations(true).resizable(true).visible(true).focused(true)
+        .on_navigation(move |nav_url| {
+            let mut url_str = nav_url.as_str().to_string();
+            if url_str.starts_with("yuedu://") {
+                if let Some(pos) = url_str.find("src=") {
+                    let raw = &url_str[pos + 4..];
+                    url_str = urlencoding::decode(raw).unwrap_or_else(|_| raw.into()).into_owned();
+                } else { return true; }
+            }
+            if is_download_url(&url_str) {
+                let app = app_nav.clone(); let lbl = label_nav.clone(); let url = url_str.clone();
+                if let Some(window) = app_nav.get_webview_window(&lbl) { show_loading(&window); }
+                tauri::async_runtime::spawn(async move {
+                    match download_and_detect(&url).await {
+                        Ok(info) => {
+                            if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
+                                "url": info.url,
+                                "fileName": info.file_name,
+                                "fileSize": info.file_size,
+                                "resourceType": info.resource_type,
+                                "count": info.count,
+                                "savedPath": info.saved_path,
+                            }));
+                        }
+                        Err(e) => {
+                            if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
+                                "error": true, "message": e
+                            }));
+                        }
+                    }
+                });
+                false
+            } else { true }
+        })
+        .on_new_window(move |new_url, _| {
+            let url_str = new_url.as_str().to_string();
+            if is_download_url(&url_str) {
+                let app = app_win.clone(); let lbl = label_win.clone(); let url = url_str.clone();
+                if let Some(window) = app_win.get_webview_window(&lbl) { show_loading(&window); }
+                tauri::async_runtime::spawn(async move {
+                    match download_and_detect(&url).await {
+                        Ok(info) => {
+                            if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
+                                "url": info.url,
+                                "fileName": info.file_name,
+                                "fileSize": info.file_size,
+                                "resourceType": info.resource_type,
+                                "count": info.count,
+                                "savedPath": info.saved_path,
+                            }));
+                        }
+                        Err(e) => {
+                            if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
+                                "error": true, "message": e
+                            }));
+                        }
+                    }
+                });
+            } else if should_open_in_new_window(&url_str) {
+                let app = app_new.clone(); let url = url_str.clone();
+                tauri::async_runtime::spawn(async move {
+                    let title = url.split('/').nth(2).unwrap_or("新窗口");
+                    let _ = rss_open_url_inner(&app, &url, title).await;
+                });
+            } else {
+                let app = app_win.clone(); let lbl = label_win.clone(); let url = url_str.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(w) = app.get_webview_window(&lbl) {
+                        let e = url.replace('\'', "\\'");
+                        let _ = w.eval(&format!("window.location.href='{}'", e));
+                    }
+                });
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()
+        .map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    Ok(())
+}
+
+async fn rss_open_url_inner(app: &tauri::AppHandle, url: &str, title: &str) -> Result<()> {
+    let parsed_url = url::Url::parse(url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
+    let label = format!("rss_{}", uuid::Uuid::new_v4());
+    let (pos_x, pos_y, win_w, win_h) = if let Some(main) = app.get_webview_window("main") {
+        let p = main.outer_position().unwrap_or_default();
+        let s = main.outer_size().unwrap_or_default();
+        (p.x as f64, p.y as f64, s.width as f64, s.height as f64)
+    } else { (0.0, 0.0, 1000.0, 700.0) };
+    let w = (win_w * 0.7).max(400.0);
+    let h = (win_h * 0.7).max(300.0);
+    let x = pos_x + (win_w - w) / 2.0 + 30.0;
+    let y = pos_y + (win_h - h) / 2.0 + 30.0;
+    WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed_url))
+        .title(title).inner_size(w, h).position(x.max(0.0), y.max(0.0))
+        .decorations(true).resizable(true).visible(true).focused(true)
+        .on_navigation(move |nav_url| !is_download_url(nav_url.as_str()))
+        .build()
+        .map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn download_binary(url: String, headers: Option<HashMap<String, String>>) -> Result<String> {
+    use reqwest::Client; use base64::Engine;
+    let client = Client::builder().user_agent(DEFAULT_UA).danger_accept_invalid_certs(true).timeout(Duration::from_secs(30)).build()
+        .map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let mut req = client.get(&url);
+    if let Some(h) = headers { for (k, v) in h { req = req.header(k, v); } }
+    let response = req.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let bytes = response.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[tauri::command]
+pub async fn proxy_image(url: String, source_json: String) -> Result<String> {
+    use reqwest::Client; use base64::Engine;
+    let source: serde_json::Value = serde_json::from_str(&source_json).map_err(|e| crate::error::AbyssError::ParseError(e.to_string()))?;
+    let cache_dir = get_cache_dir(); fs::create_dir_all(&cache_dir).ok();
+    let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = cache_dir.join(&hash);
+    if file_path.exists() { if let Ok(data) = fs::read(&file_path) { return Ok(format!("data:image/webp;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data))); } }
+    let client = Client::builder().danger_accept_invalid_certs(true).timeout(Duration::from_secs(30)).build()
+        .map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let mut req = client.get(&url);
+    if let Some(header_str) = source.get("header").and_then(|v| v.as_str()) {
+        if header_str.starts_with("@js:") || header_str.starts_with("<js>") {
+            req = req.header("User-Agent", "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A) AppleWebKit/537.36")
+                .header("Referer", source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""))
+                .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+        } else { if let Ok(h) = serde_json::from_str::<HashMap<String, String>>(header_str) { for (k, v) in h { req = req.header(k, v); } } }
+    } else { req = req.header("User-Agent", "Mozilla/5.0 (Linux; Android 13; zh-cn; V2304A)"); }
+    let response = req.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+    let final_url = response.url().to_string();
+    let content_type = response.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("image/webp").to_string();
+    let bytes = if final_url.contains("link.webp") || final_url.contains("link/link.webp") {
+        let mut req2 = client.get(&final_url); req2 = req2.header("Referer", source.get("bookSourceUrl").and_then(|v| v.as_str()).unwrap_or(""));
+        let response2 = req2.send().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?;
+        response2.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))?
+    } else { response.bytes().await.map_err(|e| crate::error::AbyssError::NetworkError(e.to_string()))? };
+    let _ = fs::write(&file_path, &bytes); clean_old_cache(&cache_dir, 100);
+    Ok(format!("data:{};base64,{}", content_type, base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+
+
+========================================
+=== src-tauri/src/lib.rs ===
+========================================
+pub mod commands;
+pub mod error;
+pub mod network;
+pub mod js_runtime;
+pub mod storage;
+
+use tauri::Manager;
+use tauri::WebviewWindowBuilder;
+use tauri::WebviewUrl;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            commands::store_get,
+            commands::store_set,
+            commands::store_delete,
+            commands::store_get_all,
+            commands::get_book_sources,
+            commands::add_book_source,
+            commands::import_sources_from_url,
+            commands::toggle_book_source,
+            commands::delete_book_source,
+            commands::delete_failed_sources,
+            commands::test_book_source,
+            commands::test_all_sources,
+            commands::get_explore_categories,
+            commands::execute_js_rule,
+            commands::source_login,
+            commands::source_login_ui,
+            commands::source_login_action,
+            commands::fetch_url,
+            commands::download_binary,
+            commands::proxy_image,
+            commands::login_webview,
+            commands::rss_open_url,
+            commands::engine_search,
+            commands::engine_batch_search,
+            commands::engine_get_toc,
+            commands::engine_get_content,
+            commands::engine_get_book_info,
+            commands::engine_parse_rule,
+            commands::import_txt,
+            commands::get_local_book_chapters,
+            commands::get_local_chapter_content,
+            commands::optimize_book_source,
+            commands::optimize_book_sources,
+            commands::cache_get_info,
+            commands::cache_clear,
+            commands::cache_clear_category,
+            commands::cache_get_cover,
+            commands::cache_put_cover,
+            commands::cache_put_covers,
+            commands::cache_put_toc,
+            commands::cache_get_toc,
+            commands::cache_put_content,
+            commands::cache_get_content,
+            commands::cache_has_cover,
+            commands::cache_set_max_size,
+            commands::cache_migrate,
+            commands::comic_fetch_image,
+            commands::comic_prefetch_images,
+            commands::comic_clear_cache,
+        ])
+        .setup(|app| {
+            crate::js_runtime::ops::set_app_handle(app.handle().clone());
+            let app_data_dir = app.path().app_data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("abyss-reader"));
+            std::fs::create_dir_all(&app_data_dir).ok();
+            let lib_cache_dir = app_data_dir.join("lib_cache");
+            crate::js_runtime::ops::set_lib_cache_dir(lib_cache_dir);
+            let image_cache_dir = app_data_dir.join("image_cache");
+            crate::commands::fetch_url::set_image_cache_dir(image_cache_dir);
+            crate::js_runtime::ops::set_cookie_save_dir(app_data_dir.clone());
+            crate::storage::cache::init_cache_dir(&app_data_dir);
+
+            let db_path = app_data_dir.join("abyss-reader.db");
+            if let Err(e) = storage::init_db(db_path.to_str().unwrap_or("abyss-reader.db")) {
+                eprintln!("初始化数据库失败: {}", e);
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
+                }
+            }
+
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("墨阅")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .decorations(false)
+                .background_color(tauri::window::Color(26, 26, 26, 255))
+                .visible(true)
+                .build()
+                .unwrap();
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("启动失败");
+}
+
+
+
+
+
+========================================
+=== src/services/webdav.ts ===
+========================================
+import { store, network } from '../api/index.js'
+
+export const DEFAULT_WEBDAV_CONFIG = {
+  server: '',
+  username: '',
+  password: '',
+  folder: 'legado',
+  deviceName: 'desktop',
+  enabled: false,
+}
+
+export function encryptConfig(config: any): any {
+  const encoded = { ...config }
+  if (encoded.password) encoded.password = btoa(encoded.password.split('').reverse().join(''))
+  return encoded
+}
+
+export function decryptConfig(config: any): any {
+  const decoded = { ...config }
+  if (decoded.password) {
+    try { decoded.password = atob(decoded.password).split('').reverse().join('') }
+    catch { decoded.password = '' }
+  }
+  return decoded
+}
+
+export async function webdavRequest(
+  config: any, method: string, path: string, body: any = null, headers: any = {}
+): Promise<{ status: number; data: string }> {
+  const base = config.server.replace(/\/+$/, '')
+  const folder = (config.folder || 'legado').replace(/^\/+/, '').replace(/\/+$/, '')
+  const cleanPath = path.replace(/^\/+/, '')
+  const url = base + '/' + folder + '/' + cleanPath
+  const auth = btoa(config.username + ':' + config.password)
+  const allHeaders = { Authorization: 'Basic ' + auth, ...headers }
+
+  const res = await network.fetch(url, {
+    method, headers: allHeaders, body, timeout: 30000,
+  })
+  return { status: 200, data: typeof res === 'string' ? res : JSON.stringify(res) }
+}
+
+export async function listBackups(config: any): Promise<{ filename: string; date: string; deviceName: string }[]> {
+  try {
+    const res = await webdavRequest(config, 'PROPFIND', '', null, { Depth: '1' })
+    const items: { filename: string; date: string; deviceName: string }[] = []
+    const xml = res.data
+    if (!xml.includes('<d:multistatus') && !xml.includes('<D:multistatus')) return []
+    const responses = xml.split(/<(?:d|D):response>/g).filter((s: string) => s.includes('<d:href>') || s.includes('<D:href>'))
+    for (const resp of responses) {
+      const nameMatch = resp.match(/<(?:d|D):displayname>([^<]+)<\/(?:d|D):displayname>/)
+      if (!nameMatch) continue
+      const name = nameMatch[1]
+      if (!name || (!name.endsWith('.zip') && !name.endsWith('.json'))) continue
+      const dateMatch = resp.match(/<(?:d|D):getlastmodified>([^<]+)<\/(?:d|D):getlastmodified>/)
+      const date = dateMatch ? dateMatch[1] : ''
+      let deviceName = 'unknown'
+      const nameWithoutExt = name.replace(/\.(zip|json)$/, '')
+      const parts = nameWithoutExt.split('-')
+      if (parts.length >= 3) { deviceName = parts.slice(2).join('-') }
+      items.push({ filename: name, date, deviceName })
+    }
+    return items.sort((a, b) => b.filename.localeCompare(a.filename))
+  } catch (err) { return [] }
+}
+
+export async function getLatestBackup(config: any): Promise<{ filename: string; date: string; deviceName: string } | null> {
+  const list = await listBackups(config)
+  return list.length > 0 ? list[0] : null
+}
+
+export async function restoreBackup(config: any, filename: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const base = config.server.replace(/\/+$/, '')
+    const folder = (config.folder || 'legado').replace(/^\/+/, '').replace(/\/+$/, '')
+    const url = base + '/' + folder + '/' + filename
+    const auth = btoa(config.username + ':' + config.password)
+    const headers = { Authorization: 'Basic ' + auth }
+
+    if (filename.endsWith('.json')) {
+      const res = await network.fetch(url, { method: 'GET', headers, timeout: 30000 })
+      const data = JSON.parse(typeof res === 'string' ? res : JSON.stringify(res))
+      for (const [key, value] of Object.entries(data)) {
+        await store.set(key, value)
+      }
+      return { success: true, message: '恢复成功' }
+    }
+
+    // ZIP
+    const base64Data = await network.downloadBinary(url, headers)
+    const JSZip = (await import('jszip')).default
+    const zip = await JSZip.loadAsync(base64Data, { base64: true })
+    const jsonFiles = zip.file(/\.json$/)
+    if (!jsonFiles || jsonFiles.length === 0) {
+      return { success: false, message: 'ZIP 中未找到 JSON 文件' }
+    }
+
+    for (const file of jsonFiles) {
+      const content = await file.async('string')
+      try {
+        const parsed = JSON.parse(content)
+        let key = file.name.replace(/\.json$/, '').replace(/^.*\//, '')
+        // 合并替换规则：replaceRule 追加而非覆盖
+        if (key === 'replaceRule') {
+          const existing = (await store.get('replaceRule')) || []
+          const incoming = Array.isArray(parsed) ? parsed : []
+          const merged = [...existing]
+          for (const rule of incoming) {
+            if (!merged.find((r: any) => r.name === rule.name && r.pattern === rule.pattern)) {
+              merged.push(rule)
+            }
+          }
+          await store.set('replaceRule', merged)
+        } else {
+          await store.set(key, parsed)
+        }
+      } catch { continue }
+    }
+
+    return { success: true, message: '恢复成功' }
+  } catch (err: any) {
+    return { success: false, message: '恢复失败: ' + err.message }
+  }
+}
+
+export async function fullSync(config: any, localData?: any): Promise<{ success: boolean; message: string }> {
+  try {
+    const dataToSync = localData || await store.getAll()
+    const JSZip = (await import('jszip')).default
+    const zip = new JSZip()
+
+    const keysToSync = ['bookshelf', 'bookSource', 'readingProgress', 'replaceRule', 'bookGroup', 'txtTocRule', 'dictRule', 'keyboardAssists', 'rssSources']
+    let syncedCount = 0
+
+    for (const key of keysToSync) {
+      const value = dataToSync[key]
+      if (value !== undefined && value !== null) {
+        zip.file(key + '.json', JSON.stringify(value, null, 2))
+        syncedCount++
+      }
+    }
+
+    if (syncedCount === 0) { return { success: false, message: '没有数据可同步' } }
+
+    const zipData = await zip.generateAsync({ type: 'base64' })
+    const device = config.deviceName || 'desktop'
+    const filename = `backup${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${device}.zip`
+
+    await webdavRequest(config, 'PUT', filename, zipData, { 'Content-Type': 'application/zip' })
+
+    return { success: true, message: `备份上传成功: ${filename} (${syncedCount} 个文件)` }
+  } catch (err: any) {
+    return { success: false, message: err.message }
+  }
+}
+
+
+========================================
+=== src/pages/settings/WebDAV.vue ===
+========================================
+<template>
+  <div class="settings-subpage">
+    <header class="subpage-header">
+      <BackButton />
+      <h2>WebDAV 同步</h2>
+    </header>
+
+    <div class="setting-item">
+      <div class="setting-label">
+        <span class="label-text">服务器地址</span>
+        <span class="label-desc">支持坚果云、Nextcloud 等</span>
+      </div>
+      <input v-model="config.server" type="text" class="input-search" style="width:260px" placeholder="https://dav.jianguoyun.com/dav/" name="webdav-server" id="webdav-server" autocomplete="off" />
+    </div>
+    <div class="setting-item">
+      <div class="setting-label"><span class="label-text">账号</span></div>
+      <input v-model="config.username" type="text" class="input-search" style="width:260px" name="webdav-username" id="webdav-username" autocomplete="off" />
+    </div>
+    <div class="setting-item">
+      <div class="setting-label">
+        <span class="label-text">密码</span>
+        <span class="label-desc">应用专用密码，加密存储</span>
+      </div>
+      <input v-model="config.password" type="password" class="input-search" style="width:260px" name="webdav-password" id="webdav-password" autocomplete="new-password" />
+    </div>
+    <div class="setting-item">
+      <div class="setting-label">
+        <span class="label-text">子文件夹</span>
+        <span class="label-desc">默认 legado</span>
+      </div>
+      <input v-model="config.folder" type="text" class="input-search" style="width:260px" placeholder="legado" name="webdav-folder" id="webdav-folder" autocomplete="off" />
+    </div>
+    <div class="setting-item">
+      <div class="setting-label"><span class="label-text">设备名称</span></div>
+      <input v-model="config.deviceName" type="text" class="input-search" style="width:260px" placeholder="desktop" name="webdav-device" id="webdav-device" autocomplete="off" />
+    </div>
+    <div class="setting-item">
+      <div class="setting-label"><span class="label-text">启用同步</span></div>
+      <label class="toggle-switch">
+        <input v-model="config.enabled" type="checkbox" name="webdav-enabled" id="webdav-enabled" />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="webdav-actions">
+      <button class="btn-primary" :disabled="testing" @click="testConnection">{{ testing ? '测试中...' : '测试连接' }}</button>
+      <button class="btn-primary" :disabled="syncing" @click="uploadBackup">{{ syncing ? '上传中...' : '上传备份' }}</button>
+      <button class="btn-secondary" :disabled="syncing" @click="loadBackupList">刷新备份列表</button>
+      <button class="btn-secondary" :disabled="syncing || backupList.length === 0" @click="restoreLatest">恢复最新备份</button>
+    </div>
+
+    <div v-if="status" class="status-message" :class="status.type">{{ status.message }}</div>
+
+    <div v-if="backupList.length > 0" class="backup-list">
+      <div class="backup-header">可用备份（共 {{ backupList.length }} 个）</div>
+      <div v-for="backup in backupList" :key="backup.filename" class="backup-item">
+        <span class="backup-name">{{ backup.filename }}</span>
+        <span class="backup-date">{{ backup.date }}</span>
+        <button class="btn-secondary" style="padding:4px 14px;font-size:12px" @click="restoreBackupFile(backup.filename)">恢复</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, onMounted } from 'vue'
+import { useMessage } from 'naive-ui'
+import { store } from '@/api'
+import { useBookshelfStore } from '@/store'
+import { DEFAULT_WEBDAV_CONFIG, webdavRequest, listBackups, getLatestBackup, restoreBackup, fullSync, encryptConfig, decryptConfig } from '@/services/webdav'
+import BackButton from '@/components/BackButton.vue'
+
+const message = useMessage()
+const bookshelfStore = useBookshelfStore()
+const config = ref({ ...DEFAULT_WEBDAV_CONFIG, deviceName: 'desktop' })
+const status = ref<{ type: string; message: string } | null>(null)
+const backupList = ref<{ filename: string; date: string; deviceName: string }[]>([])
+const testing = ref(false)
+const syncing = ref(false)
+
+async function loadConfig() {
+  try { const saved = await store.get('webdavConfig'); if (saved) config.value = { ...DEFAULT_WEBDAV_CONFIG, ...decryptConfig(saved) } } catch {}
+}
+async function saveConfig() { try { await store.set('webdavConfig', encryptConfig(config.value)) } catch {} }
+
+async function testConnection() {
+  testing.value = true; status.value = null
+  try {
+    const res = await webdavRequest(config.value, 'PROPFIND', '', null, { Depth: '0' })
+    if (res.status === 207) { status.value = { type: 'success', message: '连接成功' }; await loadBackupList() }
+    else if (res.status === 401) status.value = { type: 'error', message: '认证失败' }
+    else if (res.status === 404) status.value = { type: 'warning', message: '文件夹不存在，上传时会自动创建' }
+    else status.value = { type: 'error', message: `HTTP ${res.status}` }
+  } catch (err: any) { status.value = { type: 'error', message: err.message } }
+  finally { testing.value = false; await saveConfig() }
+}
+
+async function loadBackupList() {
+  try {
+    const result = await listBackups(config.value)
+    console.log('[WebDAV Vue] listBackups 原始返回:', result)
+    console.log('[WebDAV Vue] 返回类型:', typeof result)
+    console.log('[WebDAV Vue] 是否数组:', Array.isArray(result))
+    console.log('[WebDAV Vue] 长度:', result?.length)
+    if (result && Array.isArray(result)) {
+      backupList.value = result
+      console.log('[WebDAV Vue] backupList 已赋值，长度:', backupList.value.length)
+    } else {
+      backupList.value = []
+      console.warn('[WebDAV Vue] listBackups 返回的不是数组')
+    }
+    if (backupList.value.length === 0) message.info('没有找到备份文件')
+    else message.success(`找到 ${backupList.value.length} 个备份`)
+  } catch (err: any) {
+    console.error('[WebDAV Vue] loadBackupList 异常:', err)
+    message.error('加载备份列表失败: ' + err.message)
+  }
+}
+
+async function uploadBackup() {
+  syncing.value = true; status.value = null
+  try {
+    const allKeys: any = await store.getAll()
+    const localData: any = {}
+    for (const key of Object.keys(allKeys || {})) {
+      localData[key] = allKeys[key]
+    }
+    const result = await fullSync(config.value, localData)
+    status.value = { type: result.success ? 'success' : 'error', message: result.message }
+    if (result.success) await loadBackupList()
+  } catch (err: any) { status.value = { type: 'error', message: err.message } }
+  finally { syncing.value = false }
+}
+
+async function restoreLatest() {
+  const latest = await getLatestBackup(config.value)
+  if (!latest) { status.value = { type: 'warning', message: '没有可恢复的备份' }; return }
+  await restoreBackupFile(latest.filename)
+}
+
+async function restoreBackupFile(filename: string) {
+  syncing.value = true; status.value = null
+  try {
+    const result = await restoreBackup(config.value, filename)
+    if (result.success) {
+      await bookshelfStore.loadBooks()
+      status.value = { type: 'success', message: `已恢复: ${filename}` }
+      message.success('恢复成功')
+    } else {
+      status.value = { type: 'error', message: result.message }
+    }
+  } catch (err: any) { status.value = { type: 'error', message: err.message } }
+  finally { syncing.value = false }
+}
+
+watch(config, () => saveConfig(), { deep: true })
+onMounted(() => { loadConfig() })
+</script>
+
+<style scoped>
+.settings-subpage { padding: 28px 36px; max-width: 680px; }
+.subpage-header { display: flex; align-items: center; gap: 16px; margin-bottom: 36px; }
+.subpage-header h2 { font-size: 22px; font-weight: 600; color: var(--text-primary); margin: 0; }
+.setting-item { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid var(--border-color); }
+.setting-label { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.label-text { font-size: 15px; color: var(--text-primary); font-weight: 500; }
+.label-desc { font-size: 13px; color: var(--text-muted); }
+.input-search { padding: 8px 14px; font-size: 14px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); outline: none; transition: border-color 0.2s; }
+.input-search:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
+.toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
+.toggle-slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; }
+.toggle-switch input:checked + .toggle-slider { background: var(--brand); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+.webdav-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.status-message { margin-top: 14px; padding: 12px 16px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5; }
+.status-message.success { background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.2); color: #4caf50; }
+.status-message.error { background: rgba(231,76,60,0.08); border: 1px solid rgba(231,76,60,0.2); color: #e74c3c; }
+.status-message.warning { background: rgba(243,156,18,0.08); border: 1px solid rgba(243,156,18,0.2); color: #f39c12; }
+.backup-list { margin-top: 18px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
+.backup-header { padding: 10px 14px; background: var(--bg-hover); font-size: 13px; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); font-weight: 500; }
+.backup-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; font-size: 13px; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); transition: background 0.15s; }
+.backup-item:last-child { border-bottom: none; }
+.backup-item:hover { background: var(--bg-hover); }
+.backup-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backup-date { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
+</style>
+
+

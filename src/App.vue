@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider :theme="theme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
     <n-message-provider>
       <n-notification-provider>
         <n-dialog-provider>
@@ -50,6 +50,7 @@
               </main>
             </div>
           </div>
+          <DownloadConfirm ref="downloadConfirm" />
         </n-dialog-provider>
       </n-notification-provider>
     </n-message-provider>
@@ -61,13 +62,15 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { onLog, initLogBridge } from '../engine/event/index.js'
 import PhotoViewer from './components/PhotoViewer.vue'
+import DownloadConfirm from './components/DownloadConfirm.vue'
 import { darkTheme, lightTheme, zhCN, dateZhCN, NIcon } from 'naive-ui'
-import { BookOutline, SearchOutline, CompassOutline, CloudOutline, SettingsOutline, AppsOutline } from '@vicons/ionicons5'
+import { BookOutline, SearchOutline, CompassOutline, ShareSocialOutline, SettingsOutline, AppsOutline } from '@vicons/ionicons5'
 import { useBookshelfStore, useReadingStore } from '@/store'
 import { ROUTES, APP_VERSION } from '@shared/constants'
 import BookDetail from '@/components/BookDetail.vue'
 import Reader from '@/components/Reader.vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,6 +84,7 @@ const appVersion = APP_VERSION
 const effectiveTheme = ref('dark')
 const photoViewer = ref<InstanceType<typeof PhotoViewer> | null>(null)
 const isMaximized = ref(false)
+const downloadConfirm = ref<InstanceType<typeof DownloadConfirm> | null>(null)
 
 function resolveEffectiveTheme(theme: string): string {
   if (theme === 'system') return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -98,7 +102,10 @@ function setTheme(theme: string) {
   applyThemeToDOM(theme)
 }
 
-const theme = computed(() => currentTheme.value === 'dark' || currentTheme.value === 'system' ? darkTheme : lightTheme)
+const naiveTheme = computed(() => {
+  const t = resolveEffectiveTheme(currentTheme.value)
+  return t === 'dark' || t === 'sepia' ? darkTheme : lightTheme
+})
 
 const themeOverrides = { common: { primaryColor: '#d4a017', primaryColorHover: '#e8c547', primaryColorPressed: '#b8860b', primaryColorSuppl: '#d4a017' } }
 
@@ -106,7 +113,7 @@ const navItems = [
   { route: ROUTES.BOOKSHELF, icon: BookOutline, label: '书架' },
   { route: ROUTES.SEARCH, icon: SearchOutline, label: '搜索' },
   { route: ROUTES.EXPLORE, icon: CompassOutline, label: '发现' },
-  { route: ROUTES.MARKET, icon: CloudOutline, label: '书源市场' },
+  { route: 'rss', icon: ShareSocialOutline, label: '订阅' },
   { route: ROUTES.SOURCES, icon: AppsOutline, label: '书源管理' },
   { route: ROUTES.SETTINGS, icon: SettingsOutline, label: '设置' },
 ]
@@ -116,11 +123,8 @@ function minimizeWindow() { getCurrentWindow().minimize() }
 
 async function toggleMaximize() {
   const win = getCurrentWindow()
-  if (await win.isMaximized()) {
-    await win.unmaximize()
-  } else {
-    await win.maximize()
-  }
+  if (await win.isMaximized()) { await win.unmaximize() }
+  else { await win.maximize() }
 }
 
 async function updateMaximizedState() {
@@ -132,6 +136,7 @@ function closeWindow() { getCurrentWindow().close() }
 function handleSystemThemeChange() { if (currentTheme.value === 'system') applyThemeToDOM('system') }
 
 let mediaQuery: MediaQueryList | null = null
+let unlisten: (() => void) | null = null
 
 onMounted(async () => {
   await initLogBridge()
@@ -141,11 +146,20 @@ onMounted(async () => {
   mediaQuery.addEventListener('change', handleSystemThemeChange)
   await updateMaximizedState()
   window.addEventListener('resize', updateMaximizedState)
+
+  unlisten = await listen<any>('rss-download', (event) => {
+    if (event.payload.error) {
+      downloadConfirm.value?.show({ resourceType: 'error', message: event.payload.message })
+      return
+    }
+    downloadConfirm.value?.show(event.payload)
+  })
 })
 
 onUnmounted(() => {
   if (mediaQuery) mediaQuery.removeEventListener('change', handleSystemThemeChange)
   window.removeEventListener('resize', updateMaximizedState)
+  if (unlisten) unlisten()
 })
 
 watch(currentTheme, val => applyThemeToDOM(val))

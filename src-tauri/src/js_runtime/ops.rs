@@ -23,14 +23,7 @@ pub fn get_ua() -> String {
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 pub fn set_app_handle(handle: tauri::AppHandle) { let _ = APP_HANDLE.set(handle); }
 fn emit_log(level: &str, msg: &str) {
-    if let Some(handle) = APP_HANDLE.get() {
-        let _ = handle.emit("global-log", &serde_json::json!({
-            "level": level,
-            "module": "explore",
-            "source": "rust",
-            "message": msg
-        }));
-    }
+    if let Some(handle) = APP_HANDLE.get() { let _ = handle.emit("global-log", &serde_json::json!({ "level": level, "module": "explore", "source": "rust", "message": msg })); }
 }
 
 fn parse_ajax_url(raw: &str) -> (String, Option<String>, Option<HashMap<String, String>>, Option<String>) {
@@ -68,28 +61,12 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
             let client = reqwest::Client::builder().user_agent(get_ua()).danger_accept_invalid_certs(true).build().unwrap();
             while let Ok(((url, method, headers, body), reply_tx)) = rx.recv() {
                 rate_limit(&url);
-                emit_log("debug", &format!("[ajax] url={} method={:?}", url, method));
                 let mut req = if method.as_deref() == Some("POST") { client.post(&url) } else { client.get(&url) };
                 if let Some(h) = &headers { for (k, v) in h { req = req.header(k.as_str(), v.as_str()); } }
                 if let Some(b) = &body { req = req.body(b.clone()); }
                 let result = match req.send().await {
-                    Ok(resp) => {
-                        let status = resp.status().as_u16();
-                        match resp.text().await {
-                            Ok(text) => {
-                                emit_log("debug", &format!("[ajax] status={} len={} preview={}", status, text.len(), &text[..text.len().min(200)]));
-                                Ok(text)
-                            },
-                            Err(e) => {
-                                emit_log("error", &format!("[ajax] response error: {}", e));
-                                Err(format!("response error: {}", e))
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        emit_log("error", &format!("[ajax] request error: {}", e));
-                        Err(format!("request error: {}", e))
-                    }
+                    Ok(resp) => { match resp.text().await { Ok(text) => Ok(text), Err(e) => Err(format!("response error: {}", e)) } },
+                    Err(e) => Err(format!("request error: {}", e)),
                 };
                 let _ = reply_tx.send(result);
             }
@@ -100,13 +77,10 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
 
 #[op2] #[string] pub fn op_java_ajax(#[string] url: String) -> String {
     let (req_url, method, headers, body) = parse_ajax_url(&url);
-    emit_log("debug", &format!("[ajax] op called url={} method={:?}", req_url, method));
     let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
     if AJAX_TX.send(((req_url, method, headers, body), reply_tx)).is_ok() {
         match reply_rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(Ok(text)) => text,
-            Ok(Err(e)) => format!("error: {}", e),
-            Err(_) => "error: timeout".to_string(),
+            Ok(Ok(text)) => text, Ok(Err(e)) => format!("error: {}", e), Err(_) => "error: timeout".to_string(),
         }
     } else { "error: send failed".to_string() }
 }
@@ -139,15 +113,12 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
     rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_default()
 }
 
-// 使用 #[string] 返回 JSON 字符串，前端 JSON.parse 解析，避免 serde_v8 对嵌套 Value 的额外处理
 #[op2] #[string] pub fn op_jsoup_parse(#[string] html: String) -> String {
     use scraper::Html;
     let doc = Html::parse_document(&html);
     let root = element_to_json(&doc.root_element());
     let result = serde_json::json!({ "html": html, "root": root });
-    let json_str = result.to_string();
-    emit_log("debug", &format!("[jsoup] html_len={} json_len={}", html.len(), json_str.len()));
-    json_str
+    result.to_string()
 }
 
 fn element_to_json(el: &scraper::ElementRef) -> serde_json::Value {
@@ -167,13 +138,8 @@ fn element_to_json(el: &scraper::ElementRef) -> serde_json::Value {
         let val = attr.1.to_string();
         attrs.insert(key, val.into());
     }
-    if let Some(id) = el.value().id() {
-        attrs.entry("id".to_string()).or_insert(id.into());
-    }
-    let has_attrs = !attrs.is_empty();
-    let result = serde_json::json!({ "tag": tag, "attrs": attrs, "children": children });
-    if has_attrs { emit_log("debug", &format!("[jsoup] tag={} attrs_len={}", tag, attrs.len())); }
-    result
+    if let Some(id) = el.value().id() { attrs.entry("id".to_string()).or_insert(id.into()); }
+    serde_json::json!({ "tag": tag, "attrs": attrs, "children": children })
 }
 
 #[op2] #[string] pub fn op_java_base64_encode(#[string] input: String) -> String { use base64::Engine; base64::engine::general_purpose::STANDARD.encode(input.as_bytes()) }
@@ -196,7 +162,6 @@ static STORAGE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, HashMap<S
 #[op2] #[string] pub fn op_java_get(#[string] source_key: String, #[string] key: String) -> String { STORAGE.lock().get(&source_key).and_then(|m| m.get(&key)).cloned().unwrap_or_default() }
 
 static COOKIE_STORE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, HashMap<String, String>>>> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
-
 #[op2] #[string] pub fn op_java_get_cookie(#[string] url: String, #[string] key: String) -> String {
     let store = COOKIE_STORE.lock();
     if let Some(cookies) = store.get(&url) {
@@ -209,7 +174,6 @@ static COOKIE_STORE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, Hash
     }
     String::new()
 }
-
 #[op2(fast)] pub fn op_java_set_cookie(#[string] url: String, #[string] cookie_str: String) {
     let mut store = COOKIE_STORE.lock(); let cookies = store.entry(url).or_default();
     for part in cookie_str.split(';') { let t = part.trim(); if let Some(eq) = t.find('=') { let k = t[..eq].trim().to_string(); let v = t[eq+1..].trim().to_string(); if !k.is_empty() { cookies.insert(k, v); } } }
@@ -237,7 +201,7 @@ pub fn load_cookies_from_file() -> String {
 #[op2] #[string] pub fn op_java_get_verification_code(#[string] svg: String) -> String { svg }
 #[op2] #[string] pub fn op_java_show_photo(#[string] src: String) -> String { src }
 #[op2] #[string] pub fn op_java_open_video_player(#[string] url: String, #[string] title: String) -> String { let _ = open::that(&url); title }
-#[op2] #[string] pub fn op_java_download_file(#[string] url: String) -> String { let dir = get_cache_dir(); std::fs::create_dir_all(&dir).ok(); let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash); let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1); if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(60)) { let _ = std::fs::write(&file_path, &text); return file_path.to_string_lossy().to_string(); } } String::new() }
+#[op2] #[string] pub fn op_java_download_file(#[string] url: String) -> String { let dir = get_cache_dir(); std::fs::create_dir_all(&dir).ok(); let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash); let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1); if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(60)) { let _ = std::fs::write(&file_path, &text); return text; } } String::new() }
 #[op2(fast)] pub fn op_java_up_login_data(#[string] _info: String) {}
 #[op2(fast)] pub fn op_java_refresh_explore() {}
 #[op2(fast)] pub fn op_java_refresh_book_info() {}
@@ -252,9 +216,78 @@ fn get_cache_dir() -> PathBuf { LIB_CACHE_DIR.get().cloned().unwrap_or_else(|| s
     let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash);
     if file_path.exists() { if let Ok(content) = std::fs::read_to_string(&file_path) { return content; } }
     let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
-    if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(30)) { let _ = std::fs::write(&file_path, &text); return text; } }
+    if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() {
+        if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            let _ = std::fs::write(&file_path, &text);
+            return text;
+        }
+    }
     String::new()
 }
 
 #[op2] #[string] pub fn op_java_save_cookies() -> String { let store = COOKIE_STORE.lock(); match serde_json::to_string(&*store) { Ok(json) => { if let Some(dir) = COOKIE_SAVE_PATH.get() { let _ = std::fs::write(dir.join("cookies.json"), &json); } json } Err(e) => format!("error: {}", e) } }
 #[op2] #[string] pub fn op_java_load_cookies() -> String { load_cookies_from_file() }
+
+// ============================================
+// RSA
+// ============================================
+use rsa::{RsaPrivateKey, RsaPublicKey, Pkcs1v15Encrypt};
+use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+
+static RSA_KEY_STORE: LazyLock<parking_lot::Mutex<HashMap<String, (Option<RsaPrivateKey>, Option<RsaPublicKey>)>>> = LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+#[op2] #[string] pub fn op_java_rsa_set_public_key(#[string] source: String, #[string] key: String) -> String {
+    let clean = key.trim();
+    let der = if clean.starts_with("-----") {
+        match RsaPublicKey::from_public_key_pem(clean) { Ok(k) => k, Err(e) => return format!("error: {}", e) }
+    } else {
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, clean) {
+            Ok(der_bytes) => match RsaPublicKey::from_public_key_der(&der_bytes) { Ok(k) => k, Err(e) => return format!("error: {}", e) },
+            Err(e) => return format!("error: base64 decode: {}", e)
+        }
+    };
+    let mut store = RSA_KEY_STORE.lock();
+    let entry = store.entry(source).or_insert((None, None));
+    entry.1 = Some(der);
+    "ok".into()
+}
+
+#[op2] #[string] pub fn op_java_rsa_set_private_key(#[string] source: String, #[string] key: String) -> String {
+    let clean = key.trim();
+    let der = if clean.starts_with("-----") {
+        match RsaPrivateKey::from_pkcs8_pem(clean) { Ok(k) => k, Err(e) => return format!("error: {}", e) }
+    } else {
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, clean) {
+            Ok(der_bytes) => match RsaPrivateKey::from_pkcs8_der(&der_bytes) { Ok(k) => k, Err(e) => return format!("error: {}", e) },
+            Err(e) => return format!("error: base64 decode: {}", e)
+        }
+    };
+    let mut store = RSA_KEY_STORE.lock();
+    let entry = store.entry(source).or_insert((None, None));
+    entry.0 = Some(der);
+    "ok".into()
+}
+
+#[op2] #[string] pub fn op_java_rsa_encrypt(#[string] source: String, #[string] data: String) -> String {
+    let store = RSA_KEY_STORE.lock();
+    let entry = match store.get(&source) { Some(e) => e, None => return "error: no key set".into() };
+    let pub_key = match &entry.1 { Some(k) => k, None => return "error: no public key".into() };
+    let mut rng = rand::thread_rng();
+    match pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, data.as_bytes()) {
+        Ok(encrypted) => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &encrypted),
+        Err(e) => format!("error: {}", e)
+    }
+}
+
+#[op2] #[string] pub fn op_java_rsa_decrypt(#[string] source: String, #[string] data: String) -> String {
+    let store = RSA_KEY_STORE.lock();
+    let entry = match store.get(&source) { Some(e) => e, None => return "error: no key set".into() };
+    let priv_key = match &entry.0 { Some(k) => k, None => return "error: no private key".into() };
+    let decoded = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data) {
+        Ok(d) => d, Err(e) => return format!("error: base64 decode: {}", e)
+    };
+    match priv_key.decrypt(Pkcs1v15Encrypt, &decoded) {
+        Ok(decrypted) => String::from_utf8_lossy(&decrypted).to_string(),
+        Err(e) => format!("error: {}", e)
+    }
+}

@@ -87,6 +87,7 @@ export interface TocOptions {
   redirectUrl?: string
   cachedHtml?: string
   book?: Partial<Book>
+  formatJsExecutor?: (js: string, context: Record<string, any>) => Promise<string>
 }
 
 export interface ContentOptions {

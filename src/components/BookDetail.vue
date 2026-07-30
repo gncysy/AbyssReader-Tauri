@@ -109,6 +109,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useMessage, useDialog, NModal } from 'naive-ui'
 import { useBookshelfStore, useReadingStore } from '@/store'
 import { reader as readerApi, store, loginWebview } from '@/api'
+import { invoke } from '@tauri-apps/api/core'
 import type { Book, BookSource, Chapter } from '@shared/types'
 
 const props = defineProps<{ book: Book | null; source: BookSource | null }>()
@@ -158,6 +159,54 @@ const fullIntroHtml = computed(() => {
 })
 
 const bookInfoCache = new Map<string, { intro: string | null; kind: string | null; lastChapter: string | null }>()
+
+// formatJsExecutor
+const formatJsExecutor = async (js: string, context: Record<string, any>) => {
+  try {
+    const safeContext: Record<string, any> = {}
+    for (const [k, v] of Object.entries(context)) {
+      if (v === null || v === undefined) { safeContext[k] = v; continue }
+      if (typeof v === 'function') continue
+      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+        const plain: Record<string, any> = {}
+        for (const [pk, pv] of Object.entries(v)) {
+          if (typeof pv !== 'function' && typeof pv !== 'object') plain[pk] = pv
+        }
+        safeContext[k] = plain
+      } else { safeContext[k] = v }
+    }
+    const response: any = await invoke('execute_js_rule', {
+      code: js,
+      context: safeContext,
+      timeoutMs: 10000
+    })
+    return response?.success ? (response.result || '') : ''
+  } catch { return '' }
+}
+
+// 目录持久化缓存 key
+function getTocCacheKey(): string {
+  return 'toc__' + (props.source?.bookSourceUrl || '') + '__' + (props.book?.tocUrl || props.book?.bookUrl || '')
+}
+
+async function loadTocFromCache(): Promise<Chapter[] | null> {
+  try {
+    const raw = await invoke('cache_get_toc', { bookUrl: getTocCacheKey() })
+    if (raw) return JSON.parse(raw as string)
+  } catch {}
+  return null
+}
+
+async function saveTocToCache(chs: Chapter[]) {
+  try {
+    await invoke('cache_put_toc', { bookUrl: getTocCacheKey(), dataJson: JSON.stringify(chs) })
+  } catch {}
+}
+
+async function invalidateTocCache() {
+  // 换源时删除旧缓存 — 实际上 cache_put_toc 会覆盖，不需要单独删除
+  // 但可以主动清理
+}
 
 async function loadBookInfo() {
   if (!props.book || !props.source) return
@@ -215,16 +264,29 @@ async function loadToc() {
     return
   }
 
+  // 1. 先尝试从持久化缓存加载
+  const cached = await loadTocFromCache()
+  if (cached && cached.length > 0) {
+    chapters.value = cached
+    const progress = await readingStore.loadProgress(props.book.bookUrl, props.book.name, props.book.author)
+    if (progress) currentChapterId.value = progress.chapterId
+    return
+  }
+
   loadingToc.value = true
   try {
     const allSources: any[] = (await store.get('bookSource')) || []
     const source = props.source || allSources.find((s: any) => s.bookSourceName === props.book?.originName)
     if (!source) { chapters.value = []; return }
     const { getToc } = await import('../../engine/business/toc.js')
-    chapters.value = await getToc(source, props.book.tocUrl || props.book.bookUrl, {
+    const result = await getToc(source, props.book.tocUrl || props.book.bookUrl, {
       book: bookForToc,
-      bookKind: kind
+      bookKind: kind,
+      formatJsExecutor
     }) || []
+    chapters.value = result
+    // 2. 写入持久化缓存
+    if (result.length > 0) await saveTocToCache(result)
   } catch (err: any) {
     console.error('[加载目录]', err)
     message.error('加载目录失败: ' + (err.message || String(err)))

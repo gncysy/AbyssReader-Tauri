@@ -61,7 +61,7 @@ export const ROUTES = {
   BOOKSHELF: 'bookshelf',
   SEARCH: 'search',
   EXPLORE: 'explore',
-  MARKET: 'market',
+  RSS: 'rss',
   SOURCES: 'sources',
   SETTINGS: 'settings',
 } as const

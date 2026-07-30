@@ -95,6 +95,8 @@ export async function loginWebview(url: string, title?: string, timeoutSecs?: nu
 let executorReady = false
 
 async function executeJs(code: string, context: Record<string, any>): Promise<string> {
+  console.log('[executeJs] code=' + code.substring(0, 200))
+  console.log('[executeJs] context.book=' + JSON.stringify(context.book))
   try {
     const response: any = await invoke('execute_js_rule', {
       request: { 
@@ -105,7 +107,7 @@ async function executeJs(code: string, context: Record<string, any>): Promise<st
     })
     if (response && response.success) {
       const rawResult = response.result || ''
-      console.log('[executeJs] result len=' + rawResult.length + ' preview=' + rawResult.substring(0, 300))
+      console.log('[executeJs] result=' + rawResult.substring(0, 200))
       return rawResult
     }
     if (response && response.error) {

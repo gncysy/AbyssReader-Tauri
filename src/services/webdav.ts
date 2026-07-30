@@ -43,43 +43,25 @@ export async function webdavRequest(
 export async function listBackups(config: any): Promise<{ filename: string; date: string; deviceName: string }[]> {
   try {
     const res = await webdavRequest(config, 'PROPFIND', '', null, { Depth: '1' })
-
     const items: { filename: string; date: string; deviceName: string }[] = []
-
     const xml = res.data
-    if (!xml.includes('<d:multistatus') && !xml.includes('<D:multistatus')) {
-      console.log('[WebDAV] 响应不是 PROPFIND XML')
-      return []
-    }
-
+    if (!xml.includes('<d:multistatus') && !xml.includes('<D:multistatus')) return []
     const responses = xml.split(/<(?:d|D):response>/g).filter((s: string) => s.includes('<d:href>') || s.includes('<D:href>'))
-    console.log('[WebDAV] 解析到 response 块数量:', responses.length)
-
     for (const resp of responses) {
       const nameMatch = resp.match(/<(?:d|D):displayname>([^<]+)<\/(?:d|D):displayname>/)
       if (!nameMatch) continue
       const name = nameMatch[1]
       if (!name || (!name.endsWith('.zip') && !name.endsWith('.json'))) continue
-
       const dateMatch = resp.match(/<(?:d|D):getlastmodified>([^<]+)<\/(?:d|D):getlastmodified>/)
       const date = dateMatch ? dateMatch[1] : ''
-
       let deviceName = 'unknown'
       const nameWithoutExt = name.replace(/\.(zip|json)$/, '')
       const parts = nameWithoutExt.split('-')
-      if (parts.length >= 3) {
-        deviceName = parts.slice(2).join('-')
-      }
-
+      if (parts.length >= 3) { deviceName = parts.slice(2).join('-') }
       items.push({ filename: name, date, deviceName })
     }
-
-    console.log('[WebDAV] 找到备份文件:', items.length)
     return items.sort((a, b) => b.filename.localeCompare(a.filename))
-  } catch (err) {
-    console.error('[WebDAV] listBackups 失败:', err)
-    return []
-  }
+  } catch (err) { return [] }
 }
 
 export async function getLatestBackup(config: any): Promise<{ filename: string; date: string; deviceName: string } | null> {
@@ -104,9 +86,8 @@ export async function restoreBackup(config: any, filename: string): Promise<{ su
       return { success: true, message: '恢复成功' }
     }
 
-    // ZIP：走 Tauri 后端下载，返回 base64
+    // ZIP
     const base64Data = await network.downloadBinary(url, headers)
-
     const JSZip = (await import('jszip')).default
     const zip = await JSZip.loadAsync(base64Data, { base64: true })
     const jsonFiles = zip.file(/\.json$/)
@@ -118,12 +99,21 @@ export async function restoreBackup(config: any, filename: string): Promise<{ su
       const content = await file.async('string')
       try {
         const parsed = JSON.parse(content)
-        let key = file.name.replace(/\.json$/, '')
-        if (key.includes('/')) {
-          const parts = key.split('/')
-          key = parts[parts.length - 1]
+        let key = file.name.replace(/\.json$/, '').replace(/^.*\//, '')
+        // 合并替换规则：replaceRule 追加而非覆盖
+        if (key === 'replaceRule') {
+          const existing = (await store.get('replaceRule')) || []
+          const incoming = Array.isArray(parsed) ? parsed : []
+          const merged = [...existing]
+          for (const rule of incoming) {
+            if (!merged.find((r: any) => r.name === rule.name && r.pattern === rule.pattern)) {
+              merged.push(rule)
+            }
+          }
+          await store.set('replaceRule', merged)
+        } else {
+          await store.set(key, parsed)
         }
-        await store.set(key, parsed)
       } catch { continue }
     }
 
@@ -139,7 +129,7 @@ export async function fullSync(config: any, localData?: any): Promise<{ success:
     const JSZip = (await import('jszip')).default
     const zip = new JSZip()
 
-    const keysToSync = ['bookshelf', 'bookSource', 'readingProgress', 'replaceRules']
+    const keysToSync = ['bookshelf', 'bookSource', 'readingProgress', 'replaceRule', 'bookGroup', 'txtTocRule', 'dictRule', 'keyboardAssists', 'rssSources']
     let syncedCount = 0
 
     for (const key of keysToSync) {
@@ -150,9 +140,7 @@ export async function fullSync(config: any, localData?: any): Promise<{ success:
       }
     }
 
-    if (syncedCount === 0) {
-      return { success: false, message: '没有数据可同步' }
-    }
+    if (syncedCount === 0) { return { success: false, message: '没有数据可同步' } }
 
     const zipData = await zip.generateAsync({ type: 'base64' })
     const device = config.deviceName || 'desktop'
@@ -160,10 +148,7 @@ export async function fullSync(config: any, localData?: any): Promise<{ success:
 
     await webdavRequest(config, 'PUT', filename, zipData, { 'Content-Type': 'application/zip' })
 
-    return {
-      success: true,
-      message: `备份上传成功: ${filename} (${syncedCount} 个文件)`,
-    }
+    return { success: true, message: `备份上传成功: ${filename} (${syncedCount} 个文件)` }
   } catch (err: any) {
     return { success: false, message: err.message }
   }

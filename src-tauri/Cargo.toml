@@ -31,6 +31,7 @@ once_cell = "1"
 parking_lot = "0.12"
 url = "2"
 regex = "1"
+fancy-regex = "0.14"
 md5 = "0.7"
 urlencoding = "2.1"
 deno_core = "0.315"
@@ -46,6 +47,13 @@ oxc_codegen = "0.47"
 oxc_allocator = "0.47"
 oxc_span = "0.47"
 oxc_semantic = "0.47"
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
+rand = "0.8"
+dirs-next = "2.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[profile.dev]
+debug = 0

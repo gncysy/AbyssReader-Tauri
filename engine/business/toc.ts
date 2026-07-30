@@ -1,56 +1,282 @@
 import { emitLog } from '../event/index.js'
 // ============================================
-// 目录解析（对齐 Legado BookChapterList）
+// 目录解析（完整对齐 Legado BookChapterList.kt）
 // ============================================
 
 import { getGlobalHttpClient } from '../network/client.js'
 import { getString, getElements } from '../core/rule-parser/index.js'
-import { executeJsonPath } from '../core/rule-parser/jsonpath.js'
-import { parseRule } from '../core/rule-parser/index.js'
-import { resolveUrl } from '../core/url/index.js'
+import { analyzeUrl, resolveUrl } from '../core/url/index.js'
 import type { BookSource, Chapter } from '../../src/shared/types.js'
 import type { TocOptions } from '../types.js'
 
-const tocCache = new Map<string, { chapters: Chapter[]; timestamp: number }>()
-const CACHE_TTL = 5 * 60 * 1000
+const MAX_TOC_PAGES = 20
 
-function isJsonString(str: string): boolean { const t = str.trim(); return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']')) }
-function safeParseJson(str: string): any { try { return JSON.parse(str) } catch { return null } }
+function isJsonString(str: string): boolean {
+  const t = str.trim()
+  return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))
+}
 
-export async function parseHeader(source: BookSource, book: any): Promise<Record<string, string>> {
+function safeParseJson(str: string): any {
+  try { return JSON.parse(str) } catch { return null }
+}
+
+function needsAnalyzeUrl(url: string): boolean {
+  return url.includes('@js:') || url.includes('<js>') || url.includes('{{')
+}
+
+async function parseHeader(source: BookSource, book: any): Promise<Record<string, string>> {
   const result: Record<string, string> = {}
-  try { if (source.header) { if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) { const { executeJs } = await import('../core/rule-parser/js.js'); const ctx = { source, baseUrl: source.bookSourceUrl || '', result: '', book: book || {} }; const headerResult = await executeJs('', source.header, ctx); emitLog('debug', '[目录] header结果: ' + (headerResult ? headerResult.substring(0, 200) : '空')); try { const parsed = JSON.parse(headerResult); Object.assign(result, parsed); } catch { try { const parsed = JSON.parse(headerResult.replace(/'/g, '"')); Object.assign(result, parsed); } catch {} } } else { try { Object.assign(result, JSON.parse(source.header)) } catch { try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {} } } } } catch {}
+  try {
+    if (source.header) {
+      if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) {
+        const { executeJs } = await import('../core/rule-parser/js.js')
+        const ctx = { source, baseUrl: source.bookSourceUrl || '', result: '', book: book || {} }
+        const headerResult = await executeJs('', source.header, ctx)
+        try { Object.assign(result, JSON.parse(headerResult)) } catch {
+          try { Object.assign(result, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {}
+        }
+      } else {
+        try { Object.assign(result, JSON.parse(source.header)) } catch {
+          try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {}
+        }
+      }
+    }
+  } catch {}
   return result
 }
 
-export async function getToc(source: BookSource, tocUrl: string, options: TocOptions = {}): Promise<Chapter[]> {
-  emitLog('info', '[目录] 开始 url=' + tocUrl.substring(0, 100))
-  if (!tocUrl) return []
-  const cacheKey = (source.bookSourceUrl || '') + '::' + tocUrl; const cached = tocCache.get(cacheKey); if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.chapters
-  const httpClient = getGlobalHttpClient(); const rule = source.ruleToc; if (!rule || !rule.chapterList) return []
-  let html = options.cachedHtml || null; let finalRedirectUrl = options.redirectUrl || tocUrl
-  const headers = await parseHeader(source, options.book || {})
-  if (!html) {
-    try { const { analyzeUrl } = await import('../core/url/index.js'); const book = options.book || {}; const bookForUrl = { ...book, kind: (book as any).kind || (options as any).bookKind || (book as any).resourceID || '' }; const urlAnalysis = await analyzeUrl(tocUrl, { source, book: bookForUrl, baseUrl: source.bookSourceUrl || '', headerMap: headers }); let requestBody: string | undefined = undefined; if (urlAnalysis.method === 'POST' && urlAnalysis.body) { if (typeof urlAnalysis.body === 'string') { requestBody = urlAnalysis.body } else if (typeof urlAnalysis.body === 'object') { requestBody = JSON.stringify(urlAnalysis.body) } }; const response = await httpClient.request({ url: urlAnalysis.url, method: urlAnalysis.method, headers: urlAnalysis.headers, body: requestBody, timeout: 30000, useWebView: urlAnalysis.useWebView, webJs: urlAnalysis.webJs, sourceType: source.bookSourceType ?? 0 }); if (response.status < 200 || response.status >= 300) return []; html = response.data as string; if (response.url && response.url !== tocUrl) finalRedirectUrl = response.url }
-    catch (err) { console.warn('[Toc] 请求失败:', err); return [] }
-  }
-  if (!html || typeof html !== 'string') return []
-  emitLog('debug', '[目录] HTML长度=' + html.length + ' 有chapter-items=' + html.includes('chapter-items'))
-  const contextBook = options.book || {}
-  let listRule = rule.chapterList || ''; let reverse = false; if (listRule.startsWith('-')) { reverse = true; listRule = listRule.substring(1) } if (listRule.startsWith('+')) { listRule = listRule.substring(1) }
-  const isJson = isJsonString(html); const parsedData = isJson ? safeParseJson(html) : html
-  const ctx = { source, baseUrl: source.bookSourceUrl, result: parsedData, book: contextBook }
-  let elements = await getElements(parsedData, listRule, ctx); if (elements && typeof elements === 'object' && typeof elements.size === 'function' && !Array.isArray(elements)) { const arr: any[] = []; for (let i = 0; i < elements.size(); i++) { arr.push(elements.get(i)) } elements = arr }
-  if (!Array.isArray(elements) || elements.length === 0) { if (isJson && parsedData?.data?.list) { return parseJsonChapters(parsedData.data.list, rule, source, finalRedirectUrl, reverse) } return [] }
-  const nameRule = rule.chapterName || ''; const urlRule = rule.chapterUrl || ''; const vipRule = rule.isVip || ''; const payRule = rule.isPay || ''
-  const urlRuleHasJs = urlRule.includes('@js:') || urlRule.includes('<js>'); let urlRulesCache: SourceRule[] | null = null; if (urlRuleHasJs) { try { urlRulesCache = parseRule(urlRule, false) } catch {} }
-  const chapters: Chapter[] = []
-  for (const item of elements) { let safeItem: any = item; if (item === null || item === undefined) continue; try { safeItem = JSON.parse(JSON.stringify(item)) } catch {}; const itemCtx = { ...ctx, result: safeItem, book: contextBook }; const title = await getString(safeItem, nameRule, itemCtx) || ''; let url = ''; let deferredJs: string | undefined; let deferredResult: any; if (urlRuleHasJs && urlRulesCache) { let tempResult: any = safeItem; const jsRules: any[] = []; for (const sr of urlRulesCache) { if (sr.mode === 'js') { jsRules.push(sr) } else { tempResult = await getString(tempResult, sr.rule, { ...itemCtx, result: tempResult }) || tempResult } } if (jsRules.length > 0) { deferredResult = tempResult; deferredJs = jsRules.map(sr => sr.rule).join('\n') } else { url = typeof tempResult === 'string' ? tempResult : '' } } else { url = await getString(safeItem, urlRule, itemCtx) || '' }; if (title) { const isVip = vipRule ? await getString(safeItem, vipRule, itemCtx) === 'true' : false; const isPay = payRule ? await getString(safeItem, payRule, itemCtx) === 'true' : false; if (!url) url = finalRedirectUrl; chapters.push({ id: chapters.length, title: String(title), url: resolveUrl(String(url), finalRedirectUrl), index: chapters.length, isVip, isPay, _deferredJs: deferredJs, _deferredResult: deferredResult } as Chapter) } }
-  if (reverse) chapters.reverse(); chapters.forEach((ch, idx) => { ch.index = idx; ch.id = idx }); tocCache.set(cacheKey, { chapters, timestamp: Date.now() }); return chapters
+async function fetchPage(
+  httpClient: ReturnType<typeof getGlobalHttpClient>,
+  url: string, headers: Record<string, string>,
+  source: BookSource, book: any
+): Promise<{ html: string; redirectUrl: string } | null> {
+  try {
+    if (needsAnalyzeUrl(url)) {
+      const analysis = await analyzeUrl(url, { source, book: book || {}, baseUrl: source.bookSourceUrl || '', headerMap: headers })
+      let body: string | null = null
+      if (analysis.method === 'POST' && analysis.body) {
+        body = typeof analysis.body === 'string' ? analysis.body : JSON.stringify(analysis.body)
+      }
+      const resp = await httpClient.request({
+        url: analysis.url, method: analysis.method, headers: analysis.headers,
+        body, timeout: 30000, useWebView: analysis.useWebView,
+        webJs: analysis.webJs, sourceType: source.bookSourceType ?? 0
+      })
+      if (resp.status < 200 || resp.status >= 300) return null
+      const html = resp.data as string
+      if (!html || typeof html !== 'string') return null
+      return { html, redirectUrl: resp.url && resp.url !== url ? resp.url : url }
+    }
+    const resp = await httpClient.request({
+      url, method: 'GET', headers, timeout: 30000, sourceType: source.bookSourceType ?? 0
+    })
+    if (resp.status < 200 || resp.status >= 300) return null
+    const html = resp.data as string
+    if (!html || typeof html !== 'string') return null
+    return { html, redirectUrl: resp.url && resp.url !== url ? resp.url : url }
+  } catch { return null }
 }
 
-function parseJsonChapters(list: any[], rule: any, source: BookSource, baseUrl: string, reverse: boolean): Chapter[] { const chapters: Chapter[] = []; for (const item of list) { const title = item.chapterName || item.title || item.name || ''; const url = item.chapterId ? `/chapter/${item.chapterId}` : item.url || item.path || ''; if (title) { chapters.push({ id: chapters.length, title: String(title), url: resolveUrl(String(url), baseUrl), index: chapters.length, isVip: !!(item.isFree === 0 || item.isVip), isPay: !!(item.isChapterBuy || item.isPay) } as Chapter) } } if (reverse) chapters.reverse(); chapters.forEach((ch, idx) => { ch.index = idx; ch.id = idx }); return chapters }
+async function analyzeTocPage(
+  book: any, baseUrl: string, redirectUrl: string, body: string,
+  tocRule: NonNullable<BookSource['ruleToc']>, listRule: string,
+  bookSource: BookSource, getNextUrl: boolean
+): Promise<{ chapters: Chapter[]; nextUrls: string[] }> {
+  const chapters: Chapter[] = []
+  const nextUrls: string[] = []
+  const baseCtx = { source: bookSource, baseUrl: bookSource.bookSourceUrl || baseUrl, book: book || {}, result: body }
 
-interface SourceRule { mode: string; rule: string; replaceRegex?: string; replacement?: string; replaceFirst?: boolean; putMap?: Record<string, string> }
+  const isJson = isJsonString(body)
+  const parsedData = isJson ? safeParseJson(body) : body
+  const elements = await getElements(parsedData, listRule, baseCtx)
 
+  if (getNextUrl && tocRule.nextTocUrl) {
+    try {
+      const results = await getElements(parsedData, tocRule.nextTocUrl, { ...baseCtx, isUrl: true })
+      if (Array.isArray(results)) {
+        for (const item of results) {
+          if (item && typeof item === 'string' && item.trim() && item.trim() !== redirectUrl) {
+            nextUrls.push(item.trim())
+          }
+        }
+      } else if (results && typeof results === 'string' && results.trim() && results.trim() !== redirectUrl) {
+        nextUrls.push(results.trim())
+      }
+    } catch {}
+  }
 
+  if (Array.isArray(elements) && elements.length > 0) {
+    const nameRule = tocRule.chapterName || ''
+    const urlRule = tocRule.chapterUrl || ''
+    const vipRule = tocRule.isVip || ''
+    const payRule = tocRule.isPay || ''
+    const isVolumeRule = tocRule.isVolume || ''
+    const upTimeRule = tocRule.updateTime || ''
+
+    for (let index = 0; index < elements.length; index++) {
+      const item = elements[index]
+      if (item === null || item === undefined) continue
+      let safeItem: any = item
+      try { safeItem = JSON.parse(JSON.stringify(item)) } catch {}
+      const itemCtx = { ...baseCtx, result: safeItem, chapter: { url: redirectUrl } }
+
+      const title = await getString(safeItem, nameRule, itemCtx) || ''
+      if (!title) continue
+
+      let url = await getString(safeItem, urlRule, itemCtx) || ''
+      const info = upTimeRule ? await getString(safeItem, upTimeRule, itemCtx) || '' : ''
+      const isVolumeStr = isVolumeRule ? await getString(safeItem, isVolumeRule, itemCtx) || '' : ''
+      let isVolume = false; let tag = ''
+      if (isVolumeStr === 'true') { isVolume = true; tag = info } else { tag = info }
+      if (!url) url = isVolume ? title + index : redirectUrl
+
+      chapters.push({
+        id: chapters.length, title: String(title),
+        url: resolveUrl(String(url), redirectUrl), index: chapters.length,
+        isVip: vipRule ? await getString(safeItem, vipRule, itemCtx) === 'true' : false,
+        isPay: payRule ? await getString(safeItem, payRule, itemCtx) === 'true' : false,
+        isVolume, tag
+      } as any as Chapter)
+    }
+  }
+  return { chapters, nextUrls }
+}
+
+function parseJsonChapters(list: any[], _rule: any, _source: BookSource, baseUrl: string): Chapter[] {
+  const chapters: Chapter[] = []
+  for (const item of list) {
+    const title = item.chapterName || item.title || item.name || ''
+    const url = item.chapterId ? '/chapter/' + item.chapterId : item.url || item.path || ''
+    if (title) chapters.push({
+      id: chapters.length, title: String(title),
+      url: resolveUrl(String(url), baseUrl), index: chapters.length,
+      isVip: !!(item.isFree === 0 || item.isVip), isPay: !!(item.isChapterBuy || item.isPay)
+    } as Chapter)
+  }
+  chapters.forEach((ch, idx) => { ch.index = idx; ch.id = idx })
+  return chapters
+}
+
+async function applyFormatJs(
+  chapters: Chapter[], formatJs: string,
+  executor: (js: string, context: Record<string, any>) => Promise<string>,
+  source: BookSource
+): Promise<void> {
+  if (!formatJs || chapters.length === 0) return
+  const jsCode = formatJs.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
+  if (!jsCode) return
+  for (let i = 0; i < chapters.length; i++) {
+    try {
+      const ch = chapters[i]
+      const result = await executor(jsCode, { index: i + 1, chapter: ch, title: ch.title, source, baseUrl: source.bookSourceUrl || '' })
+      if (result && result.trim()) ch.title = result.trim()
+    } catch {}
+  }
+}
+
+async function applyPreUpdateJs(
+  preUpdateJs: string,
+  executor: (js: string, context: Record<string, any>) => Promise<string>,
+  source: BookSource, book: any, tocUrl: string
+): Promise<void> {
+  if (!preUpdateJs) return
+  const jsCode = preUpdateJs.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
+  if (!jsCode) return
+  try { await executor(jsCode, { source, book: book || {}, baseUrl: source.bookSourceUrl || tocUrl, result: tocUrl }) } catch {}
+}
+
+function dedupChapters(chapters: Chapter[]): Chapter[] {
+  const seen = new Map<string, Chapter>()
+  for (const ch of chapters) { if (!seen.has(ch.url)) seen.set(ch.url, ch) }
+  return Array.from(seen.values())
+}
+
+export async function getToc(
+  source: BookSource, tocUrl: string, options: TocOptions = {}
+): Promise<Chapter[]> {
+  if (!tocUrl) return []
+  const tocRule = source.ruleToc
+  if (!tocRule || !tocRule.chapterList) return []
+
+  emitLog('info', '[目录] 开始 url=' + tocUrl.substring(0, 100))
+  const httpClient = getGlobalHttpClient()
+  const headers = await parseHeader(source, options.book || {})
+  const formatJsExecutor = options.formatJsExecutor
+
+  if (tocRule.preUpdateJs && formatJsExecutor) {
+    await applyPreUpdateJs(tocRule.preUpdateJs, formatJsExecutor, source, options.book || {}, tocUrl)
+  }
+
+  let listRule = tocRule.chapterList || ''
+  let reverse = false
+  if (listRule.startsWith('-')) { reverse = true; listRule = listRule.substring(1) }
+  if (listRule.startsWith('+')) { listRule = listRule.substring(1) }
+
+  const chapterList: Chapter[] = []
+  const nextUrlList = new Set<string>()
+
+  let html = options.cachedHtml || null
+  let redirectUrl = options.redirectUrl || tocUrl
+
+  if (!html) {
+    const result = await fetchPage(httpClient, tocUrl, headers, source, options.book || {})
+    if (!result) return []
+    html = result.html; redirectUrl = result.redirectUrl
+  }
+
+  if (!html || typeof html !== 'string') return []
+
+  const { chapters: pageChapters, nextUrls } = await analyzeTocPage(
+    options.book || {}, tocUrl, redirectUrl, html, tocRule, listRule, source, true
+  )
+  chapterList.push(...pageChapters)
+  nextUrlList.add(redirectUrl)
+
+  if (nextUrls.length === 1) {
+    let nextUrl = nextUrls[0]
+    for (let page = 0; page < MAX_TOC_PAGES; page++) {
+      if (!nextUrl || nextUrlList.has(nextUrl)) break
+      nextUrlList.add(nextUrl)
+      const result = await fetchPage(httpClient, nextUrl, headers, source, options.book || {})
+      if (!result) break
+      const { chapters: np, nextUrls: nu } = await analyzeTocPage(
+        options.book || {}, nextUrl, result.redirectUrl, result.html, tocRule, listRule, source, true
+      )
+      chapterList.push(...np)
+      nextUrl = nu.length > 0 ? nu[0] : ''
+    }
+  } else if (nextUrls.length > 1) {
+    const cr = await Promise.all(nextUrls.map(async (u) => {
+      if (nextUrlList.has(u)) return []; nextUrlList.add(u)
+      const result = await fetchPage(httpClient, u, headers, source, options.book || {})
+      if (!result) return []
+      const { chapters: pc } = await analyzeTocPage(options.book || {}, u, result.redirectUrl, result.html, tocRule, listRule, source, false)
+      return pc
+    }))
+    for (const chs of cr) chapterList.push(...chs)
+  }
+
+  if (chapterList.length === 0) {
+    const isJson = isJsonString(html)
+    if (isJson) {
+      const parsed = safeParseJson(html)
+      if (parsed?.data?.list && Array.isArray(parsed.data.list)) {
+        chapterList.push(...parseJsonChapters(parsed.data.list, tocRule, source, redirectUrl))
+      }
+    }
+  }
+
+  if (chapterList.length === 0) { emitLog('warn', '[目录] 目录为空'); return [] }
+
+  if (!reverse) chapterList.reverse()
+  const deduped = dedupChapters(chapterList)
+  deduped.reverse()
+  deduped.forEach((ch, idx) => { ch.index = idx; ch.id = idx })
+
+  if (tocRule.formatJs && formatJsExecutor) {
+    await applyFormatJs(deduped, tocRule.formatJs, formatJsExecutor, source)
+  }
+
+  emitLog('info', '[目录] 目录总数:' + deduped.length)
+  return deduped
+}
