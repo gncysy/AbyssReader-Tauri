@@ -51,6 +51,7 @@ const sanitizedContent = computed(() => {
 async function loadArticle() {
   const articleLink = route.query.articleLink as string
   const sourceUrl = route.query.sourceUrl as string
+  const useWebView = route.query.useWebView === 'true'
 
   if (!articleLink) { loading.value = false; return }
 
@@ -59,25 +60,42 @@ async function loadArticle() {
     const sources: RssSource[] = Array.isArray(data) ? data : []
     const source = sources.find(s => s.sourceUrl === sourceUrl)
 
-    const html = await network.fetch(articleLink, { method: 'GET' })
-    const rawHtml = typeof html === 'string' ? html : ''
-
-    if (source?.ruleContent) {
-      const ctx = { source, baseUrl: articleLink, book: {}, result: rawHtml }
-      const articleContent = await getString(rawHtml, source.ruleContent, ctx)
-      content.value = articleContent || ''
+    let rawHtml = ''
+    if (useWebView) {
+      try {
+        const headers = source?.header ? JSON.parse(source.header) : {}
+        rawHtml = await network.fetchWebView(articleLink, {
+          headers,
+          webJs: source?.injectJs || undefined,
+          timeout: 30000,
+          sourceType: source?.type || 0,
+          preserveStyle: true,
+        })
+      } catch (e) {
+        rawHtml = await network.fetch(articleLink, { method: 'GET' })
+      }
     } else {
-      const bodyMatch = rawHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i)
-      content.value = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, '') : rawHtml.replace(/<[^>]+>/g, '')
+      rawHtml = await network.fetch(articleLink, { method: 'GET' })
     }
 
+    const htmlStr = typeof rawHtml === 'string' ? rawHtml : JSON.stringify(rawHtml)
+
     if (source?.ruleTitle) {
-      const ctx = { source, baseUrl: articleLink, book: {}, result: rawHtml }
-      const title = await getString(rawHtml, source.ruleTitle, ctx)
+      const ctx = { source, baseUrl: articleLink, book: {}, result: htmlStr }
+      const title = await getString(htmlStr, source.ruleTitle, ctx)
       if (title) articleTitle.value = title
     } else {
-      const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+      const titleMatch = htmlStr.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
       articleTitle.value = titleMatch ? titleMatch[1].trim() : '文章'
+    }
+
+    if (source?.ruleContent) {
+      const ctx = { source, baseUrl: articleLink, book: {}, result: htmlStr }
+      const articleContent = await getString(htmlStr, source.ruleContent, ctx)
+      content.value = articleContent || ''
+    } else {
+      const bodyMatch = htmlStr.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      content.value = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, '') : htmlStr.replace(/<[^>]+>/g, '')
     }
   } catch (err: any) {
     message.error('加载文章失败: ' + (err?.message || String(err)))

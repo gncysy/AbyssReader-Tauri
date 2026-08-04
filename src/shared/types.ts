@@ -153,53 +153,71 @@ export interface BookSource {
   [key: string]: any
 }
 
+// ============================================
+// 替换规则 — 完全对齐 Legado ReplaceRule
+// ============================================
 export interface ReplaceRule {
-  id: string
+  id: number
   name: string
+  group?: string | null
   pattern: string
   replacement: string
-  isRegex: boolean
+  scope?: string | null
+  scopeTitle: boolean
+  scopeContent: boolean
+  excludeScope?: string | null
   isEnabled: boolean
-  scope: 'title' | 'content'
-  bookName: string
-  bookOrigin: string
-  timeoutMs: number
+  isRegex: boolean
+  timeoutMillisecond: number
+  order: number
 }
 
-// ─── 订阅源 ───
+// ─── 订阅源（完全对齐 Legado） ───
 export interface RssSource {
   sourceName: string
   sourceUrl: string
   sourceIcon?: string | null
   sourceGroup?: string | null
   sourceComment?: string | null
+  variableComment?: string | null
+  enabled: boolean
+  enabledCookieJar?: boolean
+  singleUrl?: boolean
+  enableJs?: boolean
+  loadWithBaseUrl?: boolean
+  showWebLog?: boolean
+  preload?: boolean
+  cacheFirst?: boolean
   sortUrl?: string | null
+  customOrder?: number
   ruleArticles?: string | null
+  ruleNextPage?: string | null
   ruleTitle?: string | null
-  ruleLink?: string | null
   rulePubDate?: string | null
   ruleDescription?: string | null
   ruleImage?: string | null
-  ruleNextPage?: string | null
+  ruleLink?: string | null
   ruleContent?: string | null
+  contentWhitelist?: string | null
+  contentBlacklist?: string | null
+  shouldOverrideUrlLoading?: string | null
   style?: string | null
-  singleUrl?: boolean
-  articleStyle?: number
-  enabled: boolean
-  enabledCookieJar?: boolean
-  customOrder?: number
-  type?: number
-  enableJs?: boolean
-  loadWithBaseUrl?: boolean
-  startHtml?: string | null
-  startJs?: string | null
-  startStyle?: string | null
   injectJs?: string | null
+  preloadJs?: string | null
+  startHtml?: string | null
+  startStyle?: string | null
+  startJs?: string | null
+  coverDecodeJs?: string | null
   header?: string | null
+  concurrentRate?: string | null
   jsLib?: string | null
   loginUrl?: string | null
   loginUi?: string | null
   loginCheckJs?: string | null
+  articleStyle?: number
+  type?: number
+  lastUpdateTime?: number
+  searchUrl?: string | null
   [key: string]: any
 }
 

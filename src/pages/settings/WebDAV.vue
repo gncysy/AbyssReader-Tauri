@@ -98,21 +98,15 @@ async function testConnection() {
 async function loadBackupList() {
   try {
     const result = await listBackups(config.value)
-    console.log('[WebDAV Vue] listBackups 原始返回:', result)
-    console.log('[WebDAV Vue] 返回类型:', typeof result)
-    console.log('[WebDAV Vue] 是否数组:', Array.isArray(result))
-    console.log('[WebDAV Vue] 长度:', result?.length)
     if (result && Array.isArray(result)) {
       backupList.value = result
-      console.log('[WebDAV Vue] backupList 已赋值，长度:', backupList.value.length)
     } else {
       backupList.value = []
-      console.warn('[WebDAV Vue] listBackups 返回的不是数组')
     }
     if (backupList.value.length === 0) message.info('没有找到备份文件')
     else message.success(`找到 ${backupList.value.length} 个备份`)
   } catch (err: any) {
-    console.error('[WebDAV Vue] loadBackupList 异常:', err)
+    console.error('[WebDAV] loadBackupList 异常:', err)
     message.error('加载备份列表失败: ' + err.message)
   }
 }
@@ -165,14 +159,6 @@ onMounted(() => { loadConfig() })
 .setting-label { display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .label-text { font-size: 15px; color: var(--text-primary); font-weight: 500; }
 .label-desc { font-size: 13px; color: var(--text-muted); }
-.input-search { padding: 8px 14px; font-size: 14px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); outline: none; transition: border-color 0.2s; }
-.input-search:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
-.toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
-.toggle-slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; }
-.toggle-switch input:checked + .toggle-slider { background: var(--brand); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
 .webdav-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
 .status-message { margin-top: 14px; padding: 12px 16px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5; }
 .status-message.success { background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.2); color: #4caf50; }
@@ -186,4 +172,3 @@ onMounted(() => { loadConfig() })
 .backup-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backup-date { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
 </style>
-

@@ -2,61 +2,70 @@
   <div class="rss-articles-page">
     <header class="subpage-header">
       <BackButton />
-      <h2>{{ source?.sourceName || '文章列表' }}</h2>
+      <h2>{{ source?.sourceName || '订阅源' }}</h2>
+      <button 
+        v-if="mode === 'browse'" 
+        class="btn-secondary" 
+        style="padding:2px 12px;font-size:12px;margin-left:auto"
+        @click="toggleListMode"
+      >
+        {{ showList ? '查看网页' : '查看文章列表' }}
+      </button>
     </header>
 
-    <div v-if="sortTabs.length > 1" class="sort-tabs">
-      <button
-        v-for="tab in sortTabs"
-        :key="tab.name"
-        class="sort-tab"
-        :class="{ active: activeSortName === tab.name }"
-        @click="switchSort(tab)"
-      >{{ tab.name }}</button>
+    <!-- 浏览模式：打开独立窗口 -->
+    <div v-if="mode === 'browse' && !showList" class="webview-container" style="display:flex;align-items:center;justify-content:center;min-height:300px">
+      <div v-if="webviewLoading" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+        <div class="loading-spinner"></div>
+        <span style="color:var(--text-muted)">正在打开浏览窗口...</span>
+      </div>
+      <div v-else class="empty-state" style="padding:40px">
+        <p style="color:var(--text-muted);margin-bottom:12px">浏览窗口已打开</p>
+        <button class="btn-primary" @click="openInNewWindow">重新打开</button>
+      </div>
     </div>
 
-    <div v-if="isComplexType" class="complex-section">
-      <div class="search-row">
-        <input v-model="complexSearchKey" type="text" placeholder="输入搜索关键词..." class="input-search" style="flex:1" @keyup.enter="runComplexSearch" />
-        <button class="btn-primary" :disabled="complexLoading" @click="runComplexSearch">{{ complexLoading ? '解密中...' : '搜索' }}</button>
-        <button class="btn-secondary" @click="openComplexInWebView">在 WebView 中打开</button>
+    <!-- 列表模式：原有文章列表 -->
+    <template v-else>
+      <div v-if="sortTabs.length > 1" class="sort-tabs">
+        <button
+          v-for="tab in sortTabs"
+          :key="tab.name"
+          class="sort-tab"
+          :class="{ active: activeSortName === tab.name }"
+          @click="switchSort(tab)"
+        >{{ tab.name }}</button>
       </div>
-      <div v-if="complexResult" style="margin-top:12px">
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px">解密结果：</p>
-        <div style="padding:10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius-sm);word-break:break-all;font-size:13px;max-height:120px;overflow-y:auto">{{ complexResult }}</div>
-        <button class="btn-primary" style="margin-top:8px;padding:6px 14px;font-size:13px" @click="fetchWithComplexResult">使用此结果加载</button>
-      </div>
-      <iframe v-if="complexIframeSrc" ref="complexIframe" :src="complexIframeSrc" style="display:none" @load="onComplexIframeLoad"></iframe>
-    </div>
 
-    <div v-if="!loading && articles.length > 0" :class="articleListClass">
-      <div
-        v-for="item in articles"
-        :key="item.link"
-        class="article-item"
-        :class="articleItemClass"
-        @click="openArticle(item)"
-      >
-        <img v-if="item.image && articleStyle !== 0" :src="item.image" class="article-image" @error="(e) => (e.target as HTMLImageElement).style.display='none'" />
-        <div class="article-content">
-          <h4 class="article-title">{{ item.title }}</h4>
-          <p v-if="item.description && articleStyle !== 2 && articleStyle !== 4" class="article-desc">{{ item.description }}</p>
-          <p v-if="item.pubDate" class="article-date">{{ item.pubDate }}</p>
+      <div v-if="!loading && articles.length > 0" :class="articleListClass">
+        <div
+          v-for="item in articles"
+          :key="item.link"
+          class="article-item"
+          :class="articleItemClass"
+          @click="openArticle(item)"
+        >
+          <img v-if="item.image && articleStyle !== 0" :src="item.image" class="article-image" @error="(e) => (e.target as HTMLImageElement).style.display='none'" />
+          <div class="article-content">
+            <h4 class="article-title">{{ item.title }}</h4>
+            <p v-if="item.description && articleStyle !== 2 && articleStyle !== 4" class="article-desc">{{ item.description }}</p>
+            <p v-if="item.pubDate" class="article-date">{{ item.pubDate }}</p>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div v-if="hasNextPage && !loading" style="text-align:center;padding:16px">
-      <button class="btn-secondary" :disabled="loadingMore" @click="loadNextPage">{{ loadingMore ? '加载中...' : '加载更多' }}</button>
-    </div>
+      <div v-if="hasNextPage && !loading" style="text-align:center;padding:16px">
+        <button class="btn-secondary" :disabled="loadingMore" @click="loadNextPage">{{ loadingMore ? '加载中...' : '加载更多' }}</button>
+      </div>
 
-    <div v-if="loading" style="display:flex;justify-content:center;padding:60px">
-      <div class="loading-spinner"></div>
-    </div>
+      <div v-if="loading" style="display:flex;justify-content:center;padding:60px">
+        <div class="loading-spinner"></div>
+      </div>
 
-    <div v-if="!loading && articles.length === 0 && !isComplexType" class="empty-state">
-      <p>暂无文章</p>
-    </div>
+      <div v-if="!loading && articles.length === 0" class="empty-state">
+        <p>暂无文章</p>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -64,9 +73,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { invoke } from '@tauri-apps/api/core'
 import { network, store } from '@/api'
-import { getElements, getString } from '../../engine/core/rule-parser/index.js'
+import { invoke } from '@tauri-apps/api/core'
+import { createAnalyzer } from '../../engine/core/rule-parser/index.js'
 import BackButton from '@/components/BackButton.vue'
 import type { RssSource, RssArticle } from '@shared/types'
 
@@ -83,14 +92,13 @@ const currentPageUrl = ref('')
 const hasNextPage = ref(false)
 const nextPageUrl = ref('')
 
-const complexSearchKey = ref('')
-const complexLoading = ref(false)
-const complexResult = ref('')
-const complexIframeSrc = ref('')
-const complexIframe = ref<HTMLIFrameElement | null>(null)
-let complexResolve: ((value: string) => void) | null = null
+const mode = ref<'browse' | 'list'>('list')
+const showList = ref(false)
+const webviewLoading = ref(false)
 
-const isComplexType = computed(() => !!(source.value?.startHtml))
+const articleCache = new Map<string, { articles: RssArticle[]; nextUrl: string; timestamp: number }>()
+const CACHE_TTL = 5 * 60 * 1000
+
 const articleStyle = computed(() => source.value?.articleStyle || 0)
 
 const sortTabs = computed(() => {
@@ -121,17 +129,58 @@ async function loadSource() {
     const data = await store.get('rssSources')
     const sources: RssSource[] = Array.isArray(data) ? data : []
     const sourceUrl = route.query.sourceUrl as string
+    const modeParam = route.query.mode as string || 'list'
+    
     source.value = sources.find(s => s.sourceUrl === sourceUrl) || null
-    if (source.value) {
-      const tabs = sortTabs.value
-      if (tabs.length > 0) {
-        activeSortName.value = tabs[0].name
-        currentPageUrl.value = tabs[0].url
-      } else {
-        currentPageUrl.value = source.value.sourceUrl
-      }
+    
+    mode.value = modeParam === 'browse' ? 'browse' : 'list'
+    
+    if (!source.value) return
+
+    if (mode.value === 'browse') {
+      openInNewWindow()
+      return
     }
-  } catch { source.value = null }
+
+    const tabs = sortTabs.value
+    if (tabs.length > 0) {
+      activeSortName.value = tabs[0].name
+      currentPageUrl.value = tabs[0].url
+    } else {
+      currentPageUrl.value = source.value.sourceUrl
+    }
+    await fetchArticles()
+  } catch { 
+    source.value = null 
+  }
+}
+
+function openInNewWindow() {
+  if (!source.value) return
+  webviewLoading.value = true
+  invoke('rss_open_url', {
+    url: source.value.sourceUrl,
+    title: source.value.sourceName || '订阅源'
+  }).then(() => {
+    webviewLoading.value = false
+  }).catch((err: any) => {
+    webviewLoading.value = false
+    message.error('打开失败: ' + (err?.message || String(err)))
+  })
+}
+
+function toggleListMode() {
+  showList.value = !showList.value
+  if (showList.value && articles.value.length === 0) {
+    const tabs = sortTabs.value
+    if (tabs.length > 0) {
+      activeSortName.value = tabs[0].name
+      currentPageUrl.value = tabs[0].url
+    } else {
+      currentPageUrl.value = source.value?.sourceUrl || ''
+    }
+    fetchArticles()
+  }
 }
 
 function switchSort(tab: { name: string; url: string }) {
@@ -139,20 +188,25 @@ function switchSort(tab: { name: string; url: string }) {
   currentPageUrl.value = tab.url
   articles.value = []
   hasNextPage.value = false
+  articleCache.clear()
   fetchArticles()
 }
 
 async function parseArticles(html: string): Promise<{ articles: RssArticle[]; nextUrl: string }> {
   if (!source.value) return { articles: [], nextUrl: '' }
-  const baseCtx = { source: source.value, baseUrl: currentPageUrl.value || source.value.sourceUrl, book: {}, result: html }
+
+  const analyzer = createAnalyzer(source.value)
+  analyzer.setContent(html, currentPageUrl.value || source.value.sourceUrl)
 
   let listRule = source.value.ruleArticles || ''
   let reverse = false
   if (listRule.startsWith('-')) { reverse = true; listRule = listRule.substring(1) }
   if (listRule.startsWith('+')) { listRule = listRule.substring(1) }
 
-  const elements = await getElements(html, listRule, baseCtx)
-  if (!Array.isArray(elements) || elements.length === 0) return { articles: [], nextUrl: '' }
+  const elements = await analyzer.getElements(listRule)
+  if (!Array.isArray(elements) || elements.length === 0) {
+    return { articles: [], nextUrl: '' }
+  }
 
   const titleRule = source.value.ruleTitle || ''
   const linkRule = source.value.ruleLink || ''
@@ -163,18 +217,28 @@ async function parseArticles(html: string): Promise<{ articles: RssArticle[]; ne
   const result: RssArticle[] = []
   for (const item of elements) {
     if (item === null || item === undefined) continue
-    let safeItem: any = item
-    try { safeItem = JSON.parse(JSON.stringify(item)) } catch {}
-    const itemCtx = { ...baseCtx, result: safeItem }
+    const itemAnalyzer = createAnalyzer(source.value)
+    itemAnalyzer.setContent(item, currentPageUrl.value || source.value.sourceUrl)
 
-    const title = await getString(safeItem, titleRule, itemCtx) || ''
+    const title = (await itemAnalyzer.getString(titleRule)) || ''
     if (!title) continue
-    const link = await getString(safeItem, linkRule, { ...itemCtx, isUrl: true }) || ''
-    const description = descRule ? await getString(safeItem, descRule, itemCtx) || null : null
-    const image = imageRule ? await getString(safeItem, imageRule, itemCtx) || null : null
-    const pubDate = dateRule ? await getString(safeItem, dateRule, itemCtx) || null : null
-    result.push({ title: String(title), link, description, image, pubDate, sort: activeSortName.value, origin: source.value!.sourceUrl })
+
+    const link = (await itemAnalyzer.getString(linkRule, { isUrl: true })) || ''
+    const description = descRule ? (await itemAnalyzer.getString(descRule)) || null : null
+    const image = imageRule ? (await itemAnalyzer.getString(imageRule)) || null : null
+    const pubDate = dateRule ? (await itemAnalyzer.getString(dateRule)) || null : null
+
+    result.push({
+      title: String(title),
+      link,
+      description,
+      image,
+      pubDate,
+      sort: activeSortName.value,
+      origin: source.value!.sourceUrl,
+    })
   }
+
   if (reverse) result.reverse()
 
   let nextUrl = ''
@@ -183,15 +247,30 @@ async function parseArticles(html: string): Promise<{ articles: RssArticle[]; ne
     if (nextRule.toUpperCase() === 'PAGE') {
       nextUrl = currentPageUrl.value
     } else {
-      const raw = await getString(html, nextRule, { ...baseCtx, isUrl: true })
+      const nextAnalyzer = createAnalyzer(source.value)
+      nextAnalyzer.setContent(html, currentPageUrl.value || source.value.sourceUrl)
+      const raw = await nextAnalyzer.getString(nextRule, { isUrl: true })
       if (raw) nextUrl = raw
     }
   }
+
   return { articles: result, nextUrl }
 }
 
-async function fetchArticles() {
+async function fetchArticles(useCache = true) {
   if (!source.value || !currentPageUrl.value) return
+  if (loading.value) return
+
+  if (useCache && source.value.cacheFirst) {
+    const cached = articleCache.get(currentPageUrl.value)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      articles.value = cached.articles
+      hasNextPage.value = !!cached.nextUrl && cached.nextUrl !== currentPageUrl.value
+      nextPageUrl.value = cached.nextUrl
+      return
+    }
+  }
+
   loading.value = true
   try {
     const html = await network.fetch(currentPageUrl.value, { method: 'GET' })
@@ -199,14 +278,30 @@ async function fetchArticles() {
     articles.value = result.articles
     hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== currentPageUrl.value
     nextPageUrl.value = result.nextUrl
+
+    articleCache.set(currentPageUrl.value, {
+      articles: result.articles,
+      nextUrl: result.nextUrl,
+      timestamp: Date.now(),
+    })
   } catch (err: any) {
     message.error('获取文章失败: ' + (err?.message || String(err)))
+    const cached = articleCache.get(currentPageUrl.value)
+    if (cached) {
+      articles.value = cached.articles
+      hasNextPage.value = !!cached.nextUrl && cached.nextUrl !== currentPageUrl.value
+      nextPageUrl.value = cached.nextUrl
+      message.warning('使用缓存数据')
+    }
+  } finally {
+    loading.value = false
   }
-  finally { loading.value = false }
 }
 
 async function loadNextPage() {
   if (!nextPageUrl.value || loadingMore.value) return
+  if (!source.value) return
+
   loadingMore.value = true
   try {
     const html = await network.fetch(nextPageUrl.value, { method: 'GET' })
@@ -214,115 +309,55 @@ async function loadNextPage() {
     articles.value = [...articles.value, ...result.articles]
     hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== nextPageUrl.value
     nextPageUrl.value = result.nextUrl
+
+    articleCache.set(nextPageUrl.value, {
+      articles: result.articles,
+      nextUrl: result.nextUrl,
+      timestamp: Date.now(),
+    })
   } catch (err: any) {
     message.error('加载更多失败: ' + (err?.message || String(err)))
+  } finally {
+    loadingMore.value = false
   }
-  finally { loadingMore.value = false }
 }
 
 function openArticle(item: RssArticle) {
   if (!item.link) return
-  if (source.value?.ruleContent) {
-    router.push({ name: 'rss-read', query: { articleLink: item.link, sourceUrl: source.value.sourceUrl } })
-  } else {
-    invoke('show_browser', { html: '', script: "window.location.href='" + item.link.replace(/'/g, "\\'") + "'", options: null }).catch(() => {})
-  }
-}
-
-// ─── 复杂类型 ───
-const END_HEAD = '</' + 'head>'
-const END_BODY = '</' + 'body>'
-const END_HTML = '</' + 'html>'
-const END_SCRIPT = '</' + 'script>'
-
-function buildComplexHtml(): string {
-  if (!source.value) return ''
-  const html = source.value.startHtml || ''
-  const style = source.value.startStyle ? '<style>' + source.value.startStyle + '</style>' : ''
-  const injectJs = '<script>window.importContent=function(){var r=document.getElementById("resultText");var u=r?r.value:"";if(!u){var ts=document.querySelectorAll("textarea");for(var i=0;i<ts.length;i++){if(ts[i].value&&ts[i].value.startsWith("http")){u=ts[i].value;break}}}window.parent.postMessage({type:"rss-complex-result",url:u},"*");};' + END_SCRIPT
-
-  if (html.includes('<head>')) return html.replace('<head>', '<head>' + style + injectJs)
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + style + injectJs + END_HEAD + '<body>' + html + '<script>' + (source.value.startJs || '') + END_SCRIPT + END_BODY + END_HTML
-}
-
-async function runComplexSearch() {
-  if (!source.value) return
-  complexLoading.value = true
-  complexResult.value = ''
-  const fullHtml = buildComplexHtml()
-  const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  complexIframeSrc.value = url
-  try {
-    const result = await new Promise<string>((resolve) => {
-      complexResolve = resolve
-      setTimeout(() => resolve(''), 60000)
-    })
-    complexResult.value = result
-  } finally {
-    complexLoading.value = false
-    URL.revokeObjectURL(url)
-    complexIframeSrc.value = ''
-  }
-}
-
-function onComplexIframeLoad() {
-  if (!complexIframe.value) return
-  try {
-    const iframeWin = complexIframe.value.contentWindow
-    if (!iframeWin) return
-    const js = source.value?.startJs
-    if (js) {
-      const cleanedJs = js.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
-      const script = iframeWin.document.createElement('script')
-      script.textContent = cleanedJs
-      iframeWin.document.body.appendChild(script)
-    }
-  } catch {}
-}
-
-function handleComplexMessage(e: MessageEvent) {
-  if (e.data?.type === 'rss-complex-result' && complexResolve) {
-    complexResolve(e.data.url || '')
-    complexResolve = null
-  }
-}
-
-async function openComplexInWebView() {
-  const fullHtml = buildComplexHtml()
-  try { await invoke('show_browser', { html: fullHtml, script: source.value?.startJs || null, options: null }) } catch {}
-}
-
-async function fetchWithComplexResult() {
-  if (!complexResult.value || !source.value) return
-  loading.value = true
-  try {
-    const html = await network.fetch(complexResult.value, { method: 'GET' })
-    const result = await parseArticles(typeof html === 'string' ? html : '')
-    articles.value = result.articles
-    hasNextPage.value = result.nextUrl !== '' && result.nextUrl !== complexResult.value
-    nextPageUrl.value = result.nextUrl
-  } catch (err: any) { message.error('获取文章失败: ' + (err?.message || String(err))) }
-  finally { loading.value = false }
+  router.push({ 
+    name: 'rss-read', 
+    query: { 
+      articleLink: item.link, 
+      sourceUrl: source.value?.sourceUrl,
+      useWebView: 'true'
+    } 
+  })
 }
 
 onMounted(async () => {
   await loadSource()
-  if (source.value && !isComplexType.value) await fetchArticles()
-  window.addEventListener('message', handleComplexMessage)
 })
 
-onUnmounted(() => window.removeEventListener('message', handleComplexMessage))
+onUnmounted(() => {
+  // clean up
+})
 </script>
 
 <style scoped>
 .rss-articles-page { position: relative; z-index: 1; }
+
+.webview-container {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+
 .sort-tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; }
 .sort-tab { padding: 6px 14px; font-size: 13px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; transition: color 0.18s, border-color 0.18s; }
 .sort-tab:hover { color: var(--text-primary); border-color: var(--brand); }
 .sort-tab.active { color: var(--brand); border-color: var(--brand); background: var(--bg-active); }
-.complex-section { margin-bottom: 20px; }
-.search-row { display: flex; gap: 10px; align-items: center; }
+
 .article-list { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
 .article-cards { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .article-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }

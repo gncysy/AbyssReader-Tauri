@@ -114,10 +114,4 @@ async function toggleRule(rule: any) {
 .rule-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .dialog-form { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
 .checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-secondary); }
-.toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
-.toggle-slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-.toggle-switch input:checked + .toggle-slider { background: var(--brand); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
 </style>

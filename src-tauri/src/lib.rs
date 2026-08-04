@@ -27,6 +27,7 @@ pub fn run() {
             commands::test_all_sources,
             commands::get_explore_categories,
             commands::execute_js_rule,
+            commands::dict_query,
             commands::source_login,
             commands::source_login_ui,
             commands::source_login_action,
@@ -34,8 +35,7 @@ pub fn run() {
             commands::download_binary,
             commands::proxy_image,
             commands::login_webview,
-            commands::rss_open_url,
-            commands::engine_search,
+            commands::rss_open_url,            commands::engine_search,
             commands::engine_batch_search,
             commands::engine_get_toc,
             commands::engine_get_content,
@@ -64,19 +64,22 @@ pub fn run() {
             commands::comic_clear_cache,
         ])
         .setup(|app| {
-            crate::js_runtime::ops::set_app_handle(app.handle().clone());
+            use crate::js_runtime::ops;
+            use crate::storage::cache;
+            
+            ops::set_app_handle(app.handle().clone());
             let app_data_dir = app.path().app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("abyss-reader"));
             std::fs::create_dir_all(&app_data_dir).ok();
             let lib_cache_dir = app_data_dir.join("lib_cache");
-            crate::js_runtime::ops::set_lib_cache_dir(lib_cache_dir);
+            ops::set_lib_cache_dir(lib_cache_dir);
             let image_cache_dir = app_data_dir.join("image_cache");
             crate::commands::fetch_url::set_image_cache_dir(image_cache_dir);
-            crate::js_runtime::ops::set_cookie_save_dir(app_data_dir.clone());
-            crate::storage::cache::init_cache_dir(&app_data_dir);
+            ops::set_cookie_save_dir(app_data_dir.clone());
+            cache::init_cache_dir(&app_data_dir);
 
             let db_path = app_data_dir.join("abyss-reader.db");
-            if let Err(e) = storage::init_db(db_path.to_str().unwrap_or("abyss-reader.db")) {
+            if let Err(e) = crate::storage::init_db(db_path.to_str().unwrap_or("abyss-reader.db")) {
                 eprintln!("初始化数据库失败: {}", e);
             }
 
@@ -103,6 +106,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("启动失败");
 }
-
-
 

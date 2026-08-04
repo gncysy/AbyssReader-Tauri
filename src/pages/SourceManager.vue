@@ -389,7 +389,4 @@ onUnmounted(() => { if (unlistenTest) { try { unlistenTest() } catch {} } })
 .status-dot.disabled { background: rgba(128,128,128,0.4); }
 .test-result { color: var(--text-secondary); font-size: 12px; }
 .row-actions { display: flex; gap: 4px; align-items: center; }
-.hidden { display: none; }
-.progress-bar { height: 5px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--brand); border-radius: 3px; transition: width 0.4s ease; }
 </style>

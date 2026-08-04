@@ -19,6 +19,7 @@
     "axios-cookiejar-support": "^5.0.0",
     "cheerio": "1.0.0",
     "crypto-js": "^4.2.0",
+    "gsap": "^3.15.0",
     "isomorphic-dompurify": "^2.15.0",
     "jsonpath": "^1.1.1",
     "jszip": "^3.10.1",

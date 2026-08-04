@@ -92,12 +92,6 @@ const themeOptions = THEME_OPTIONS
 
 function setTheme(value: string) {
   readingStore.setTheme(value)
-  const root = document.documentElement
-  if (value === 'system') {
-    root.setAttribute('data-theme', window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  } else {
-    root.setAttribute('data-theme', value)
-  }
 }
 </script>
 

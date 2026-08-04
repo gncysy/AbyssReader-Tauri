@@ -19,52 +19,89 @@
         [13,2,8,4,6,15,11,1,10,9,3,14,5,0,12,7,1,15,13,8,10,3,7,4,12,5,6,11,0,14,9,2,7,11,4,1,9,12,14,2,0,6,10,13,15,3,5,8,2,1,14,7,4,10,8,13,15,12,9,0,3,5,6,11]
     ];
 
-    function permute(block, table, n) { var r=0; for(var i=0;i<n;i++){r<<=1;if(block&(1<<(64-table[i])))r|=1;} return r; }
+    function permute(block, table, n) { var r=0; for(var i=0;i<n;i++){r<<=1;if(block&(1<<(64-table[i])))r|=1;} return r>>>0; }
+    
     function keySchedule(keyBytes) {
-        var k=BigIntToBits(keyBytes);
-        var cd=permute(k,PC1,56);
-        var keys=[],c=(cd>>>28)&0xfffffff,d=cd&0xfffffff;
-        var shifts=[1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1];
-        for(var i=0;i<16;i++){var s=shifts[i];c=((c<<s)|(c>>>(28-s)))&0xfffffff;d=((d<<s)|(d>>>(28-s)))&0xfffffff;keys[i]=permute((c<<28)|d,PC2,48);}
+        // keyBytes 是 8 字节的 Uint8Array 或普通数组
+        var k = 0;
+        for (var i = 0; i < 8; i++) {
+            k = (k << 8) | (keyBytes[i] || 0);
+        }
+        k = k >>> 0;
+        var cd = permute(k, PC1, 56);
+        var c = (cd >>> 28) & 0xfffffff;
+        var d = cd & 0xfffffff;
+        var keys = [];
+        var shifts = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1];
+        for (var i = 0; i < 16; i++) {
+            var s = shifts[i];
+            c = ((c << s) | (c >>> (28 - s))) & 0xfffffff;
+            d = ((d << s) | (d >>> (28 - s))) & 0xfffffff;
+            keys[i] = permute((c << 28) | d, PC2, 48);
+        }
         return keys;
     }
 
     function desProcess(block, keys, encrypt) {
-        var b=permute(block,IP,64);
-        var l=(b>>>32)&0xffffffff,r=b&0xffffffff;
-        for(var i=0;i<16;i++){
-            var k=encrypt?keys[i]:keys[15-i];
-            var er=permute(r,E,48);
-            var x=er^k;
-            var f=0;
-            for(var j=0;j<8;j++){
-                var b6=(x>>>(42-j*6))&0x3f;
-                var row=((b6>>4)&2)|(b6&1);
-                var col=(b6>>1)&0xf;
-                f=(f<<4)|S[j][row*16+col];
+        var b = permute(block, IP, 64);
+        var l = (b >>> 32) & 0xffffffff;
+        var r = b & 0xffffffff;
+        for (var i = 0; i < 16; i++) {
+            var k = encrypt ? keys[i] : keys[15 - i];
+            var er = permute(r, E, 48);
+            var x = (er ^ k) >>> 0;
+            var f = 0;
+            for (var j = 0; j < 8; j++) {
+                var b6 = (x >>> (42 - j * 6)) & 0x3f;
+                var row = ((b6 >>> 4) & 2) | (b6 & 1);
+                var col = (b6 >>> 1) & 0xf;
+                f = (f << 4) | S[j][row * 16 + col];
             }
-            f=permute(f,P,32);
-            var temp=r;
-            r=l^f;
-            l=temp;
+            f = permute(f, P, 32);
+            var temp = r;
+            r = (l ^ f) >>> 0;
+            l = temp;
         }
-        var combined=((r<<32)|l)>>>0;
-        return permute(combined,IP_INV,64);
+        var combined = ((r << 32) | l) >>> 0;
+        // 处理大整数的情况
+        if (combined < 0) combined = combined + 4294967296;
+        return permute(combined, IP_INV, 64);
     }
-
-    function BigIntToBits(b) { var r=0; for(var i=0;i<8;i++){r=(r<<8)|(b[i]||0);} return r>>>0; }
 
     function desEncryptBlock(blockBytes, keyBytes) {
-        var block=BigIntToBits(blockBytes);
-        var keys=keySchedule(keyBytes);
-        var enc=desProcess(block,keys,true);
-        var r=[];for(var i=7;i>=0;i--){r.push((enc>>>(i*8))&0xff);}return r;
+        // blockBytes: 8 字节数组
+        var block = 0;
+        for (var i = 0; i < 8; i++) {
+            block = (block << 8) | (blockBytes[i] || 0);
+        }
+        block = block >>> 0;
+        if (block < 0) block = block + 4294967296;
+        var keys = keySchedule(keyBytes);
+        var enc = desProcess(block, keys, true);
+        // 确保结果为正数
+        if (enc < 0) enc = enc + 4294967296;
+        var r = [];
+        for (var i = 7; i >= 0; i--) {
+            r.push((enc >>> (i * 8)) & 0xff);
+        }
+        return r;
     }
+    
     function desDecryptBlock(blockBytes, keyBytes) {
-        var block=BigIntToBits(blockBytes);
-        var keys=keySchedule(keyBytes);
-        var dec=desProcess(block,keys,false);
-        var r=[];for(var i=7;i>=0;i--){r.push((dec>>>(i*8))&0xff);}return r;
+        var block = 0;
+        for (var i = 0; i < 8; i++) {
+            block = (block << 8) | (blockBytes[i] || 0);
+        }
+        block = block >>> 0;
+        if (block < 0) block = block + 4294967296;
+        var keys = keySchedule(keyBytes);
+        var dec = desProcess(block, keys, false);
+        if (dec < 0) dec = dec + 4294967296;
+        var r = [];
+        for (var i = 7; i >= 0; i--) {
+            r.push((dec >>> (i * 8)) & 0xff);
+        }
+        return r;
     }
 
     function desEncrypt(dataBytes, keyBytes, ivBytes, mode) {
@@ -74,7 +111,7 @@
         var result = [];
         var prev = ivBytes ? ivBytes.slice() : [];
         for (var i = 0; i < pad.length; i += blockSize) {
-            var block = pad.slice(i, i+blockSize);
+            var block = pad.slice(i, i + blockSize);
             if (isCBC) { for (var j = 0; j < blockSize; j++) block[j] ^= prev[j]; }
             var enc = desEncryptBlock(block, keyBytes);
             if (isCBC) prev = enc.slice();
@@ -89,7 +126,7 @@
         var result = [];
         var prev = ivBytes ? ivBytes.slice() : [];
         for (var i = 0; i < dataBytes.length; i += blockSize) {
-            var block = dataBytes.slice(i, i+blockSize);
+            var block = dataBytes.slice(i, i + blockSize);
             var encBlock = block.slice();
             var dec = desDecryptBlock(block, keyBytes);
             if (isCBC) { for (var j = 0; j < blockSize; j++) dec[j] ^= prev[j]; prev = encBlock; }
@@ -99,16 +136,16 @@
     }
 
     function tripleDesEncrypt(dataBytes, keyBytes, ivBytes, mode) {
-        if (keyBytes.length < 24) return desEncrypt(dataBytes, keyBytes.slice(0,8), ivBytes, mode);
-        var k1=keyBytes.slice(0,8),k2=keyBytes.slice(8,16),k3=keyBytes.slice(16,24);
+        if (keyBytes.length < 24) return desEncrypt(dataBytes, keyBytes.slice(0, 8), ivBytes, mode);
+        var k1 = keyBytes.slice(0, 8), k2 = keyBytes.slice(8, 16), k3 = keyBytes.slice(16, 24);
         var tmp = desEncrypt(dataBytes, k1, ivBytes, 'ECB');
         tmp = desDecrypt(tmp, k2, [], 'ECB');
         return desEncrypt(tmp, k3, ivBytes, mode);
     }
 
     function tripleDesDecrypt(dataBytes, keyBytes, ivBytes, mode) {
-        if (keyBytes.length < 24) return desDecrypt(dataBytes, keyBytes.slice(0,8), ivBytes, mode);
-        var k1=keyBytes.slice(0,8),k2=keyBytes.slice(8,16),k3=keyBytes.slice(16,24);
+        if (keyBytes.length < 24) return desDecrypt(dataBytes, keyBytes.slice(0, 8), ivBytes, mode);
+        var k1 = keyBytes.slice(0, 8), k2 = keyBytes.slice(8, 16), k3 = keyBytes.slice(16, 24);
         var tmp = desDecrypt(dataBytes, k3, ivBytes, mode);
         tmp = desEncrypt(tmp, k2, [], 'ECB');
         return desDecrypt(tmp, k1, [], 'ECB');

@@ -6,6 +6,7 @@ import { emitLog } from '../event/index.js'
 import { getGlobalHttpClient } from '../network/client.js'
 import { getString, getElements } from '../core/rule-parser/index.js'
 import { analyzeUrl, resolveUrl } from '../core/url/index.js'
+import { parseSourceHeader } from './source-helper.js'
 import type { BookSource, Chapter, Book } from '../../src/shared/types.js'
 import type { ContentOptions } from '../types.js'
 
@@ -63,46 +64,19 @@ function stripHtml(html: string): string {
     .replace(/\n\s*\n/g, '\n').split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n').trim()
 }
 
-async function parseHeader(source: BookSource, options: ContentOptions): Promise<Record<string, string>> {
-  const result: Record<string, string> = {}
-  try {
-    if (source.header) {
-      if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) {
-        const { executeJs } = await import('../core/rule-parser/js.js')
-        const ctx = { source, baseUrl: source.bookSourceUrl || '', result: '', book: options.book || {} }
-        const headerResult = await executeJs('', source.header, ctx)
-        try { Object.assign(result, JSON.parse(headerResult)) } catch { try { Object.assign(result, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {} }
-      } else {
-        try { Object.assign(result, JSON.parse(source.header)) } catch { try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {} }
-      }
-    }
-  } catch {}
-  return result
-}
-
-// ─── replaceRegex 处理（对齐 Legado：## 分隔符正则替换） ───
-function applyReplaceRegex(content: string, replaceRule: string): string {
-  if (!replaceRule || !replaceRule.includes('##')) return content
-  const parts = replaceRule.split('##')
-  const pattern = parts[1]
-  if (!pattern) return content
-  const replacement = parts[2] || ''
-  const flags = parts[3] || ''
-  const replaceFirst = flags.includes('first') || flags.includes('1')
-  try {
-    if (replaceFirst) {
-      return content.replace(new RegExp(pattern, 's'), replacement)
-    }
-    return content.replace(new RegExp(pattern, 'gs'), replacement)
-  } catch { return content }
-}
-
 async function analyzePage(
   book: Partial<Book>, baseUrl: string, redirectUrl: string, body: string,
   contentRule: NonNullable<BookSource['ruleContent']>, chapter: Partial<Chapter>,
   bookSource: BookSource, nextChapterUrl: string | null | undefined, getNextPageUrl: boolean
 ): Promise<{ content: string; nextUrls: string[] }> {
-  const ctx = { source: bookSource, baseUrl: bookSource.bookSourceUrl || baseUrl, book: book || {}, chapter: chapter || {}, nextChapterUrl: nextChapterUrl || '', result: body }
+  const ctx = {
+    source: bookSource,
+    baseUrl: bookSource.bookSourceUrl || baseUrl,
+    book: book || {},
+    chapter: chapter || {},
+    nextChapterUrl: nextChapterUrl || '',
+    result: body,
+  }
   const nextUrls: string[] = []
   let workingBody = body
   if (contentRule.sourceRegex) {
@@ -134,7 +108,7 @@ export async function getContent(
   if (!contentRule || !contentRule.content) return '书源缺少正文规则'
 
   const httpClient = getGlobalHttpClient()
-  const headers = await parseHeader(source, options)
+  const headers = await parseSourceHeader(source, options.book)
   const book = options.book || {}
   const chapter: Partial<Chapter> = { url: chapterUrl }
   const nextChapterUrl = options.nextChapterUrl || ''
@@ -190,7 +164,9 @@ export async function getContent(
           const nh = nr.data as string
           if (!nh || typeof nh !== 'string') break
           const nrd = nr.url && nr.url !== nextUrl ? nr.url : redirectUrl
-          const { content: npc, nextUrls: npu } = await analyzePage(book, nextUrl, nrd, nh, contentRule, chapter, source, nextChapterUrl, false)
+          const { content: npc, nextUrls: npu } = await analyzePage(
+            book, nextUrl, nrd, nh, contentRule, chapter, source, nextChapterUrl, true
+          )
           if (npc && npc.trim()) contentList.push(npc.trim())
           nextUrl = npu.length > 0 ? npu[0] : ''
         } catch (e: any) { console.warn('[Content] 翻页失败:', e?.message || e); break }
@@ -227,12 +203,27 @@ export async function getContent(
       } catch {}
     }
 
-    let contentStr = contentList.join('\n')
+    // 分页内容直接拼接，不换行（本来就是同一章节的内容）
+    let contentStr = contentList.join('')
 
-    // replaceRegex（对齐 Legado：##分隔符正则替换）
     if (contentRule.replaceRegex) {
-      contentStr = contentStr.split('\n').map(l => l.trim()).join('\n')
-      contentStr = applyReplaceRegex(contentStr, contentRule.replaceRegex)
+      try {
+        const parts = contentRule.replaceRegex.split('##')
+        if (parts.length >= 2) {
+          const pattern = parts[1] || ''
+          const replacement = parts[2] || ''
+          if (pattern) {
+            try {
+              const regex = new RegExp(pattern, 'g')
+              contentStr = contentStr.replace(regex, replacement)
+            } catch (regexErr: any) {
+              emitLog('warn', 'engine', 'frontend', '[正文] replaceRegex 正则无效: ' + (regexErr?.message || regexErr))
+            }
+          }
+        }
+      } catch (e: any) {
+        emitLog('warn', 'engine', 'frontend', '[正文] replaceRegex 异常: ' + (e?.message || e))
+      }
     }
 
     if (contentRule.title) {

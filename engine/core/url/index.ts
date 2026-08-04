@@ -3,6 +3,7 @@
 // ============================================
 
 import type { UrlAnalysis } from '../../types.js'
+import { parseSourceHeader } from '../../business/source-helper.js'
 import { logDebug, logInfo, logWarn, logError } from '../../event/index.js'
 
 const PAGE_PATTERN = /<([^>]*)>/g
@@ -16,7 +17,6 @@ export function setJsExecutor(fn: (code: string, context: Record<string, any>) =
 }
 
 async function evalJsExpr(jsStr: string, context: Record<string, any>): Promise<string> {
-  // 强制走 deno_core
   if (jsExecutor) {
     try {
       const result = await jsExecutor(jsStr, context)
@@ -30,8 +30,15 @@ async function evalJsExpr(jsStr: string, context: Record<string, any>): Promise<
   return ''
 }
 
+// 对齐 NetworkUtils.getAbsoluteURL：
+// javascript: 返回空，data: 直接返回，已是绝对 URL 直接返回
 export function resolveUrl(url: string, baseUrl: string): string {
   if (!url) return ''
+  // 对齐阅读：javascript: 伪协议返回空
+  if (url.startsWith('javascript')) return ''
+  // 对齐阅读：data: URL 直接返回
+  if (url.startsWith('data:')) return url
+  // 对齐阅读：已是绝对 URL 直接返回
   if (url.match(/^https?:\/\//)) return url
   const paramMatch = PARAM_PATTERN.exec(baseUrl)
   if (paramMatch) baseUrl = baseUrl.substring(0, paramMatch.index)
@@ -59,6 +66,11 @@ function parseUrlWithOption(combined: string): { url: string; option: any } | nu
   catch { try { const fixed = optionStr.replace(/'/g, '"'); const option = JSON.parse(fixed); return { url, option } } catch { return null } }
 }
 
+function isValidUrl(str: string): boolean {
+  if (!str) return false
+  return str.startsWith('http://') || str.startsWith('https://') || str.startsWith('/')
+}
+
 function createSourceProxy(sourceObj: any): any {
   if (!sourceObj || typeof sourceObj !== 'object') return sourceObj
   return new Proxy(sourceObj, {
@@ -75,6 +87,33 @@ function createSourceProxy(sourceObj: any): any {
   })
 }
 
+function analyzeJs(ruleUrl: string, ctx: Record<string, any>): Promise<string> {
+  const JS_PATTERN = /<js>([\s\S]*?)<\/js>|@js:([^\n]*)/gi
+  let start = 0
+  let result = ruleUrl
+  let jsMatch: RegExpExecArray | null
+
+  return (async () => {
+    while ((jsMatch = JS_PATTERN.exec(ruleUrl)) !== null) {
+      if (jsMatch.index > start) {
+        const text = ruleUrl.substring(start, jsMatch.index).trim()
+        if (text) result = text.replace(/@result/g, result)
+      }
+      const jsCode = (jsMatch[2] || jsMatch[1]).trim()
+      if (jsCode) {
+        const jsResult = await evalJsExpr(jsCode, { ...ctx, result })
+        result = jsResult || result
+      }
+      start = jsMatch.index + jsMatch[0].length
+    }
+    if (ruleUrl.length > start) {
+      const text = ruleUrl.substring(start).trim()
+      if (text) result = text.replace(/@result/g, result)
+    }
+    return result
+  })()
+}
+
 export async function analyzeUrl(ruleUrl: string, options: {
   baseUrl?: string; key?: string; page?: number; source?: any; book?: any; chapter?: any; headerMap?: Record<string, string>
 } = {}): Promise<UrlAnalysis> {
@@ -87,53 +126,31 @@ export async function analyzeUrl(ruleUrl: string, options: {
 
   const headerMap: Record<string, string> = {}
   if (options.source?.header) {
-    const h = options.source.header
-    if (typeof h === 'string') {
-      if (h.startsWith('@js:') || h.startsWith('<js>')) {
-        try {
-          const { executeJs } = await import('../rule-parser/js.js')
-          const ctx = { source: options.source, baseUrl: options.source.bookSourceUrl || '', result: '', book: options.book || {} }
-          const headerResult = await executeJs('', h, ctx)
-          try { Object.assign(headerMap, JSON.parse(headerResult)) } catch {
-            try { Object.assign(headerMap, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {}
-          }
-        } catch (e: any) { logWarn('url', 'frontend', 'JS header 执行失败: ' + (e?.message || e)) }
-      } else {
-        try { Object.assign(headerMap, JSON.parse(h.replace(/'/g, '"'))) }
-        catch (e: any) { logWarn('url', 'frontend', '解析header失败: ' + (e?.message || e)) }
-      }
-    }
+    const jsHeaders = await parseSourceHeader(options.source, options.book)
+    Object.assign(headerMap, jsHeaders)
   }
   if (options.headerMap) Object.assign(headerMap, options.headerMap)
 
-  let processed = ruleUrl; let jsResult = processed
+  let processed = ruleUrl
+  const sourceObj = options.source || {}
+  const proxySource = createSourceProxy(sourceObj)
+  const ctx: Record<string, any> = {
+    result: ruleUrl,
+    baseUrl: baseUrl,
+    key: options.key || '',
+    page: options.page || 1,
+    book: options.book || {},
+    source: proxySource,
+  }
+  for (const [k, v] of Object.entries(sourceObj)) {
+    if (!(k in ctx)) { ctx[k] = v }
+  }
+  if (options.key !== undefined) { ctx.key = options.key }
 
   if (processed.includes('@js:') || processed.includes('<js>')) {
     logInfo('url', 'frontend', '检测到JS规则')
-    let jsCode = processed.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '')
-    const sourceObj = options.source || {}
-    const proxySource = createSourceProxy(sourceObj)
-    const ctx: Record<string, any> = {
-      result: jsResult,
-      baseUrl: baseUrl,
-      key: options.key || '',
-      page: options.page || 1,
-      book: options.book || {},
-      source: proxySource,
-    }
-    for (const [k, v] of Object.entries(sourceObj)) {
-      if (!(k in ctx)) {
-        ctx[k] = v
-      }
-    }
-    if (options.key !== undefined) {
-      ctx.key = options.key
-    }
-    logDebug('url', 'frontend', 'source.bookSourceUrl=' + (sourceObj.bookSourceUrl || '未定义'))
-    
     try {
-      const result = await evalJsExpr(jsCode, ctx)
-      logDebug('url', 'frontend', 'JS执行结果: ' + (result ? result.substring(0, 200) : '空'))
+      const result = await analyzeJs(processed, ctx)
       if (result && result.trim()) {
         const parsed = parseUrlWithOption(result)
         if (parsed) {
@@ -147,16 +164,19 @@ export async function analyzeUrl(ruleUrl: string, options: {
             } else if (body.startsWith('{') && body.endsWith('}')) { try { body = JSON.parse(body) } catch {} }
           }
           if (typeof body === 'object' && body !== null) body = JSON.stringify(body)
-          return { url: resolveUrl(url, baseUrl), method, headers: { ...headerMap, ...(option?.headers || {}) }, body: typeof body === 'string' ? body : (body ? JSON.stringify(body) : null), charset: option?.charset || null, retry: option?.retry || 0, useWebView: option?.webView === true, webJs: option?.webJs || null, serverID: option?.serverID || null, baseUrl }
+          const resolvedUrl = resolveUrl(url, baseUrl)
+          if (!isValidUrl(resolvedUrl)) {
+            logWarn('url', 'frontend', 'JS规则返回无效URL: ' + resolvedUrl + ', 使用原始URL')
+            return { url: resolveUrl(ruleUrl, baseUrl), method: 'GET', headers: headerMap, body: null, charset: null, retry: 0, useWebView: false, webJs: null, serverID: null, baseUrl }
+          }
+          return { url: resolvedUrl, method, headers: { ...headerMap, ...(option?.headers || {}) }, body: typeof body === 'string' ? body : (body ? JSON.stringify(body) : null), charset: option?.charset || null, retry: option?.retry || 0, useWebView: option?.webView === true, webJs: option?.webJs || null, serverID: option?.serverID || null, baseUrl }
         }
-        if (result.startsWith('http://') || result.startsWith('https://') || result.startsWith('/')) {
+        if (isValidUrl(result) && (result.startsWith('http://') || result.startsWith('https://') || result.startsWith('/'))) {
           return { url: resolveUrl(result, baseUrl), method: 'GET', headers: headerMap, body: null, charset: null, retry: 0, useWebView: false, webJs: null, serverID: null, baseUrl }
         }
         processed = result
       }
-    } catch (e: any) { 
-      logError('url', 'frontend', 'JS异常: ' + (e?.message || e)) 
-    }
+    } catch (e: any) { logError('url', 'frontend', 'JS异常: ' + (e?.message || e)) }
   }
 
   processed = processed.replace(/\{\{([^}]+)\}\}/g, (_m, expr: string) => {
@@ -167,7 +187,8 @@ export async function analyzeUrl(ruleUrl: string, options: {
       const val = resolveSimpleVar(inner, options)
       return val ? encodeURIComponent(val) : ''
     }
-    return resolveSimpleVar(trimmed, options)
+    const val = resolveSimpleVar(trimmed, options)
+    return val ? encodeURIComponent(val) : ''
   })
 
   if (options.page !== undefined && options.page > 0) {
@@ -190,7 +211,7 @@ export async function analyzeUrl(ruleUrl: string, options: {
   if (typeof body === 'object' && body !== null) { try { body = JSON.stringify(body) } catch { body = null } }
   if (option?.js) {
     const val = await evalJsExpr(option.js, { result: url, baseUrl, key: options.key, page: options.page, book: options.book, source: options.source })
-    if (val) url = val
+    if (val && isValidUrl(val)) url = val
   }
 
   logInfo('url', 'frontend', '最终URL: ' + url.substring(0, 100))
@@ -207,15 +228,11 @@ function resolveSimpleVar(name: string, options: Record<string, any>): string {
   }
   if (name.startsWith('source.') && options.source) {
     const field = name.substring(7)
-    if (field === 'key') {
-      return options.source.bookSourceUrl || ''
-    }
+    if (field === 'key') return options.source.bookSourceUrl || ''
     return options.source[field] !== undefined ? String(options.source[field]) : ''
   }
   if (options.source && name in options.source) {
-    if (name === 'key') {
-      return options.source.bookSourceUrl || ''
-    }
+    if (name === 'key') return options.source.bookSourceUrl || ''
     return String(options.source[name])
   }
   return ''

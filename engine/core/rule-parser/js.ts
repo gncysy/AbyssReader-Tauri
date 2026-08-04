@@ -1,64 +1,38 @@
 // ============================================
-// JS 规则执行（强制走 deno_core，不再回退浏览器）
+// JS 执行器 — 复用 Rust Deno 运行时
 // ============================================
 
-import type { ParseContext } from '../../types.js'
-import { logDebug, logInfo, logWarn, logError } from '../../event/index.js'
+type JsExecutor = (code: string, context: Record<string, any>) => Promise<string>
 
-let jsExecutor: ((code: string, context: Record<string, any>) => Promise<string>) | null = null
+let executor: JsExecutor | null = null
 
-export function setJsExecutor(fn: (code: string, context: Record<string, any>) => Promise<string>) {
-  jsExecutor = fn
-  logInfo('engine', 'frontend', 'JS执行器已注入 (deno_core)')
-  console.log('[js.ts] JS执行器已注入')
+export function setJsExecutor(fn: JsExecutor): void {
+  executor = fn
 }
 
-export async function executeJs(source: any, rule: string, context: ParseContext): Promise<any> {
-  const ctx: Record<string, any> = {
-    result: context.result !== undefined ? context.result : (typeof source === 'string' ? source : ''),
-    src: context.src || (typeof source === 'string' ? source : ''),
-    source: context.source,
-    book: context.book || {},
-    chapter: context.chapter,
-    baseUrl: context.baseUrl || '',
-    nextChapterUrl: context.nextChapterUrl,
-    key: context.key,
-    page: context.page || 1,
-  }
+export async function executeJs(
+  code: any,
+  context: Record<string, any>
+): Promise<string> {
+  // 确保 code 是字符串
+  const codeStr = typeof code === 'string' ? code : String(code)
 
-  let code = rule.trim()
-  if (code.startsWith('@js:')) {
-    code = code.substring(4).trim()
-  }
-  if (code.startsWith('<js>')) {
-    code = code.substring(4)
-  }
-  if (code.endsWith('</js>')) {
-    code = code.substring(0, code.length - 5)
-  }
-
-  logDebug('engine', 'frontend', 'executeJs 调用, code长度=' + code.length + ', jsExecutor存在=' + (!!jsExecutor))
-
-  if (jsExecutor) {
+  if (!executor) {
+    console.warn('[executeJs] 执行器未注入，尝试从 api 导入')
     try {
-      logDebug('engine', 'frontend', '调用 jsExecutor, context keys=' + Object.keys(ctx).join(','))
-      const result = await jsExecutor(code, ctx)
-      logDebug('engine', 'frontend', 'jsExecutor 返回, result类型=' + typeof result + ', 长度=' + (result ? result.length : 0))
-      if (result !== undefined && result !== null) {
-        if (typeof result === 'string') {
-          try { return JSON.parse(result) } catch { return result }
-        }
-        return result
-      }
-      return ''
-    } catch (e: any) {
-      logError('engine', 'frontend', 'deno_core 执行失败: ' + (e?.message || e))
-      console.error('[JS] deno_core 执行失败:', e)
+      const { engine } = await import('../../../src/api/index.js')
+      const result = await engine.executeJs(codeStr, context)
+      return typeof result === 'string' ? result : JSON.stringify(result)
+    } catch (err: any) {
+      console.error('[executeJs] 降级执行失败:', err.message)
       return ''
     }
   }
-
-  logWarn('engine', 'frontend', 'deno_core 不可用，无法执行 JS 规则')
-  console.warn('[JS] deno_core 不可用')
-  return ''
+  try {
+    const result = await executor(codeStr, context)
+    return typeof result === 'string' ? result : JSON.stringify(result)
+  } catch (err: any) {
+    console.error('[executeJs] 执行失败:', err.message)
+    return ''
+  }
 }

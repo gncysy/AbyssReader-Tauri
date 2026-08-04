@@ -39,9 +39,10 @@ pub async fn fetch_url(
     app: tauri::AppHandle, url: String, method: Option<String>, body: Option<String>,
     headers: Option<HashMap<String, String>>, charset: Option<String>,
     useWebview: Option<bool>, webJs: Option<String>, timeoutSecs: Option<u64>, sourceType: Option<i32>,
+    preserveStyle: Option<bool>,
 ) -> Result<String> {
     if useWebview.unwrap_or(false) {
-        fetch_webview_inner(&app, &url, headers, webJs, timeoutSecs.unwrap_or(30), sourceType).await
+        fetch_webview_inner(&app, &url, headers, webJs, timeoutSecs.unwrap_or(30), sourceType, preserveStyle.unwrap_or(false)).await
     } else {
         let method_str = method.unwrap_or_else(|| "GET".into());
         let timeout = timeoutSecs.unwrap_or(30);
@@ -51,7 +52,7 @@ pub async fn fetch_url(
 
 async fn fetch_webview_inner(
     app: &tauri::AppHandle, url: &str, headers: Option<HashMap<String, String>>,
-    web_js: Option<String>, timeout_secs: u64, source_type: Option<i32>,
+    web_js: Option<String>, timeout_secs: u64, source_type: Option<i32>, preserve_style: bool,
 ) -> Result<String> {
     let parsed_url = url::Url::parse(url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
     let window_label = format!("webview_{}", uuid::Uuid::new_v4());
@@ -71,6 +72,8 @@ async fn fetch_webview_inner(
         format!("window.name = (function(){{ return {}; }})();", js)
     } else if is_comic {
         r#"window.name=(function(){var u=[];document.querySelectorAll('img,picture source').forEach(function(e){var s=e.getAttribute('src')||e.getAttribute('data-src')||e.getAttribute('data-original');if(s&&s.startsWith('http'))u.push(s)});return JSON.stringify(Array.from(new Set(u)))})();"#.to_string()
+    } else if preserve_style {
+        r#"window.name=JSON.stringify(document.documentElement.outerHTML);"#.to_string()
     } else {
         r#"document.querySelectorAll('script,style,link,iframe,noscript,meta').forEach(function(el){el.remove()});window.name=JSON.stringify(document.documentElement.outerHTML);"#.to_string()
     };
@@ -208,10 +211,6 @@ fn is_download_url(url: &str) -> bool {
         || url.starts_with("yuedu://")
 }
 
-fn should_open_in_new_window(url: &str) -> bool {
-    let http = url.starts_with("http://") || url.starts_with("https://");
-    http && !is_download_url(url)
-}
 
 #[tauri::command]
 pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> Result<()> {
@@ -227,13 +226,12 @@ pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> 
     let x = pos_x + (win_w - w) / 2.0;
     let y = pos_y + (win_h - h) / 2.0;
 
-    let app_nav = app.clone(); let label_nav = label.clone();
-    let app_win = app.clone(); let label_win = label.clone();
-    let app_new = app.clone();
+    let app1 = app.clone(); let lbl1 = label.clone();
+    let app2 = app.clone(); let lbl2 = label.clone();
 
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed_url.clone()))
+    let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed_url.clone()))
         .title(&title).inner_size(w, h).position(x.max(0.0), y.max(0.0))
-        .decorations(true).resizable(true).visible(true).focused(true)
+        .decorations(false).resizable(true).visible(true).focused(true)
         .on_navigation(move |nav_url| {
             let mut url_str = nav_url.as_str().to_string();
             if url_str.starts_with("yuedu://") {
@@ -243,26 +241,20 @@ pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> 
                 } else { return true; }
             }
             if is_download_url(&url_str) {
-                let app = app_nav.clone(); let lbl = label_nav.clone(); let url = url_str.clone();
-                if let Some(window) = app_nav.get_webview_window(&lbl) { show_loading(&window); }
+                let app = app1.clone(); let lbl = lbl1.clone(); let u = url_str.clone();
+                if let Some(win) = app1.get_webview_window(&lbl) { show_loading(&win); }
                 tauri::async_runtime::spawn(async move {
-                    match download_and_detect(&url).await {
+                    match download_and_detect(&u).await {
                         Ok(info) => {
                             if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
                             let _ = app.emit_to("main", "rss-download", serde_json::json!({
-                                "url": info.url,
-                                "fileName": info.file_name,
-                                "fileSize": info.file_size,
-                                "resourceType": info.resource_type,
-                                "count": info.count,
-                                "savedPath": info.saved_path,
+                                "url": info.url, "fileName": info.file_name, "fileSize": info.file_size,
+                                "resourceType": info.resource_type, "count": info.count, "savedPath": info.saved_path,
                             }));
                         }
                         Err(e) => {
                             if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
-                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
-                                "error": true, "message": e
-                            }));
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({ "error": true, "message": e }));
                         }
                     }
                 });
@@ -272,41 +264,30 @@ pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> 
         .on_new_window(move |new_url, _| {
             let url_str = new_url.as_str().to_string();
             if is_download_url(&url_str) {
-                let app = app_win.clone(); let lbl = label_win.clone(); let url = url_str.clone();
-                if let Some(window) = app_win.get_webview_window(&lbl) { show_loading(&window); }
+                let app = app2.clone(); let lbl = lbl2.clone(); let u = url_str.clone();
+                if let Some(win) = app2.get_webview_window(&lbl) { show_loading(&win); }
                 tauri::async_runtime::spawn(async move {
-                    match download_and_detect(&url).await {
+                    match download_and_detect(&u).await {
                         Ok(info) => {
                             if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
                             let _ = app.emit_to("main", "rss-download", serde_json::json!({
-                                "url": info.url,
-                                "fileName": info.file_name,
-                                "fileSize": info.file_size,
-                                "resourceType": info.resource_type,
-                                "count": info.count,
-                                "savedPath": info.saved_path,
+                                "url": info.url, "fileName": info.file_name, "fileSize": info.file_size,
+                                "resourceType": info.resource_type, "count": info.count, "savedPath": info.saved_path,
                             }));
                         }
                         Err(e) => {
                             if let Some(w) = app.get_webview_window(&lbl) { hide_loading(&w); }
-                            let _ = app.emit_to("main", "rss-download", serde_json::json!({
-                                "error": true, "message": e
-                            }));
+                            let _ = app.emit_to("main", "rss-download", serde_json::json!({ "error": true, "message": e }));
                         }
                     }
                 });
-            } else if should_open_in_new_window(&url_str) {
-                let app = app_new.clone(); let url = url_str.clone();
-                tauri::async_runtime::spawn(async move {
-                    let title = url.split('/').nth(2).unwrap_or("新窗口");
-                    let _ = rss_open_url_inner(&app, &url, title).await;
-                });
             } else {
-                let app = app_win.clone(); let lbl = label_win.clone(); let url = url_str.clone();
+                // 所有链接都在当前窗口内导航
+                let a = app2.clone(); let l = lbl2.clone();
+                let escaped = url_str.replace('\\', "\\\\").replace("\"", "\\\"");
                 tauri::async_runtime::spawn(async move {
-                    if let Some(w) = app.get_webview_window(&lbl) {
-                        let e = url.replace('\'', "\\'");
-                        let _ = w.eval(&format!("window.location.href='{}'", e));
+                    if let Some(w) = a.get_webview_window(&l) {
+                        let _ = w.eval(&format!("window.location.href = \"{}\"", escaped));
                     }
                 });
             }
@@ -314,27 +295,17 @@ pub async fn rss_open_url(app: tauri::AppHandle, url: String, title: String) -> 
         })
         .build()
         .map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
-    Ok(())
-}
 
-async fn rss_open_url_inner(app: &tauri::AppHandle, url: &str, title: &str) -> Result<()> {
-    let parsed_url = url::Url::parse(url).map_err(|e| crate::error::AbyssError::ConfigError(format!("无效 URL: {}", e)))?;
-    let label = format!("rss_{}", uuid::Uuid::new_v4());
-    let (pos_x, pos_y, win_w, win_h) = if let Some(main) = app.get_webview_window("main") {
-        let p = main.outer_position().unwrap_or_default();
-        let s = main.outer_size().unwrap_or_default();
-        (p.x as f64, p.y as f64, s.width as f64, s.height as f64)
-    } else { (0.0, 0.0, 1000.0, 700.0) };
-    let w = (win_w * 0.7).max(400.0);
-    let h = (win_h * 0.7).max(300.0);
-    let x = pos_x + (win_w - w) / 2.0 + 30.0;
-    let y = pos_y + (win_h - h) / 2.0 + 30.0;
-    WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed_url))
-        .title(title).inner_size(w, h).position(x.max(0.0), y.max(0.0))
-        .decorations(true).resizable(true).visible(true).focused(true)
-        .on_navigation(move |nav_url| !is_download_url(nav_url.as_str()))
-        .build()
-        .map_err(|e| crate::error::AbyssError::WebViewError(e.to_string()))?;
+    let nav_js = include_str!("rss_nav.js");
+    let w = window.clone();
+    let nav = nav_js.to_string();
+    std::thread::spawn(move || {
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_millis(2000));
+            let _ = w.eval(&nav);
+        }
+    });
+
     Ok(())
 }
 

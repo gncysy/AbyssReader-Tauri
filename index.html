@@ -1,57 +1,122 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>墨阅</title>
-  <link rel="icon" href="/icons/icon.svg" />
-  <style>
-    /* 在 Vue 挂载前显示加载动画 */
-    #app-loading {
-      position: fixed; inset: 0; z-index: 9999;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      background: #0d0d0d;
-      transition: opacity 0.4s ease;
-    }
-    #app-loading.hidden { opacity: 0; pointer-events: none; }
-    .loader-logo {
-      font-family: Georgia, serif;
-      color: #d4a017; font-size: 48px;
-      letter-spacing: 0.2em; margin-bottom: 24px;
-    }
-    .loader-subtitle {
-      font-family: system-ui, sans-serif;
-      color: rgba(160,152,136,0.5);
-      font-size: 11px; letter-spacing: 0.3em;
-      margin-bottom: 32px;
-    }
-    .loader-dots { display: flex; gap: 8px; }
-    .loader-dot {
-      width: 6px; height: 6px; background: #d4a017;
-      border-radius: 50%;
-      animation: breathe 1.4s infinite ease-in-out both;
-    }
-    .loader-dot:nth-child(1) { animation-delay: 0s; }
-    .loader-dot:nth-child(2) { animation-delay: 0.2s; }
-    .loader-dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes breathe {
-      0%, 80%, 100% { transform: scale(0.8); opacity: 0.4; }
-      40% { transform: scale(1.2); opacity: 1; }
-    }
-  </style>
-</head>
-<body>
-  <div id="app-loading">
-    <div class="loader-logo">墨 阅</div>
-    <div class="loader-subtitle">AbyssReader</div>
-    <div class="loader-dots">
-      <span class="loader-dot"></span>
-      <span class="loader-dot"></span>
-      <span class="loader-dot"></span>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>墨阅</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="app-loading">
+      <svg class="loader-svg" width="180" height="180" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <g id="loader-group">
+          <path id="loader-path" stroke="#d4a017" stroke-linecap="round" stroke-linejoin="round" opacity="0.12"></path>
+        </g>
+      </svg>
+      <div class="loader-text">墨阅</div>
+      <div class="loader-sub">墨香深处，阅见天地</div>
     </div>
-  </div>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; background: #050505; }
+      #app { height: 100%; overflow: hidden; }
+      #app-loading {
+        position: fixed; inset: 0; z-index: 99999;
+        background: #050505;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px;
+        transition: opacity 0.8s ease, visibility 0.8s ease;
+      }
+      #app-loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+      .loader-svg { width: 180px; height: 180px; }
+      .loader-text {
+        color: #d4a017; font-size: 26px;
+        font-family: 'Noto Serif SC', 'STSong', Georgia, serif;
+        letter-spacing: 0.28em; font-weight: 600;
+        margin-top: -8px;
+      }
+      .loader-sub {
+        color: rgba(255,255,255,0.30); font-size: 12px;
+        font-family: 'Noto Serif SC', 'STSong', Georgia, serif;
+        letter-spacing: 0.2em; font-weight: 400;
+        margin-top: 6px;
+      }
+    </style>
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      const config = {
+        particleCount: 48,
+        trailSpan: 0.20,
+        durationMs: 5400,
+        rotationDurationMs: 26000,
+        pulseDurationMs: 4500,
+        strokeWidth: 1.4,
+        roseA: 9.2,
+        roseABoost: 0.6,
+        roseBreathBase: 0.72,
+        roseBreathBoost: 0.28,
+        roseScale: 3.25,
+        point(progress, detailScale) {
+          const t = progress * Math.PI * 2;
+          const a = this.roseA + detailScale * this.roseABoost;
+          const r = a * (this.roseBreathBase + detailScale * this.roseBreathBoost) * Math.cos(4 * t);
+          return { x: 50 + Math.cos(t) * r * this.roseScale, y: 50 + Math.sin(t) * r * this.roseScale };
+        }
+      };
+      const group = document.querySelector('#loader-group');
+      const path = document.querySelector('#loader-path');
+      path.setAttribute('stroke-width', String(config.strokeWidth));
+      const particles = Array.from({ length: config.particleCount }, () => {
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('fill', '#d4a017');
+        group.appendChild(circle);
+        return circle;
+      });
+      function np(p) { return ((p % 1) + 1) % 1; }
+      function detailScale(time) {
+        const pp = (time % config.pulseDurationMs) / config.pulseDurationMs;
+        return 0.52 + ((Math.sin(pp * Math.PI * 2 + 0.55) + 1) / 2) * 0.48;
+      }
+      function rotation(time) {
+        return -((time % config.rotationDurationMs) / config.rotationDurationMs) * 360;
+      }
+      function buildPath(ds, steps) {
+        steps = steps || 480;
+        var d = '';
+        for (var i = 0; i <= steps; i++) {
+          var pt = config.point(i / steps, ds);
+          d += (i === 0 ? 'M' : 'L') + ' ' + pt.x.toFixed(2) + ' ' + pt.y.toFixed(2) + ' ';
+        }
+        return d;
+      }
+      function getParticle(index, progress, ds) {
+        var tailOffset = index / (config.particleCount - 1);
+        var pt = config.point(np(progress - tailOffset * config.trailSpan), ds);
+        var fade = Math.pow(1 - tailOffset, 0.38);
+        return { x: pt.x, y: pt.y, radius: 0.5 + fade * 1.4, opacity: 0.10 + fade * 0.90 };
+      }
+      var startedAt = performance.now();
+      function render(now) {
+        var time = now - startedAt;
+        var progress = (time % config.durationMs) / config.durationMs;
+        var ds = detailScale(time);
+        group.setAttribute('transform', 'rotate(' + rotation(time) + ' 50 50)');
+        path.setAttribute('d', buildPath(ds));
+        for (var i = 0; i < particles.length; i++) {
+          var p = getParticle(i, progress, ds);
+          particles[i].setAttribute('cx', p.x.toFixed(2));
+          particles[i].setAttribute('cy', p.y.toFixed(2));
+          particles[i].setAttribute('r', p.radius.toFixed(2));
+          particles[i].setAttribute('opacity', p.opacity.toFixed(3));
+        }
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+    </script>
+  </body>
 </html>
+
+
+

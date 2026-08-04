@@ -5,6 +5,8 @@ import Explore from '../pages/Explore.vue'
 import RssSources from '../pages/RssSources.vue'
 import RssArticles from '../pages/RssArticles.vue'
 import RssReader from '../pages/RssReader.vue'
+import RssSourceEdit from '../pages/RssSourceEdit.vue'
+import RssSourceDebug from '../pages/RssSourceDebug.vue'
 import Settings from '../pages/Settings.vue'
 import SourceManager from '../pages/SourceManager.vue'
 import Appearance from '../pages/settings/Appearance.vue'
@@ -25,6 +27,8 @@ const routes = [
   { path: '/rss', name: 'rss', component: RssSources },
   { path: '/rss/articles', name: 'rss-articles', component: RssArticles },
   { path: '/rss/read', name: 'rss-read', component: RssReader },
+  { path: '/rss/edit', name: 'rss-edit', component: RssSourceEdit },
+  { path: '/rss/debug', name: 'rss-debug', component: RssSourceDebug },
   { path: '/sources', name: 'sources', component: SourceManager },
   { path: '/settings', name: 'settings', component: Settings },
   { path: '/settings/appearance', name: 'appearance', component: Appearance },

@@ -109,6 +109,7 @@ button, [role="button"], .btn-back, .btn-back * { cursor: pointer !important; }
 button:disabled { cursor: not-allowed !important; }
 a { cursor: pointer !important; }
 
+/* ─── 全局按钮 ─── */
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 0 18px; font-size: 14px; font-weight: var(--font-medium);
@@ -143,6 +144,7 @@ a { cursor: pointer !important; }
 .btn-danger:hover { background: #c0392b; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(192,57,43,0.25); }
 .btn-danger:disabled { opacity: 0.4; cursor: not-allowed !important; transform: none; }
 
+/* ─── 全局输入框 ─── */
 .input-search, .search-input {
   padding: 0 14px; font-size: 14px; color: var(--text-primary);
   background: var(--bg-card); border: 1px solid var(--border-color);
@@ -155,6 +157,7 @@ a { cursor: pointer !important; }
 .input-search:focus, .search-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 .input-search::placeholder, .search-input::placeholder { color: var(--text-muted); opacity: 0.7; }
 
+/* ─── 全局下拉 ─── */
 .custom-dropdown { position: relative; display: inline-block; min-width: 120px; user-select: none; }
 .custom-dropdown-trigger {
   display: flex; align-items: center; justify-content: space-between;
@@ -183,14 +186,17 @@ a { cursor: pointer !important; }
 .custom-dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .custom-dropdown-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
 
+/* ─── 全局页面头部 ─── */
 .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
 .page-title { font-size: 28px; font-weight: var(--font-semibold); color: var(--text-primary); letter-spacing: -0.3px; margin: 0; }
 .page-subtitle { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
 
+/* ─── 全局空状态 ─── */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 68px 0; text-align: center; }
 .empty-state h3 { font-size: 20px; color: var(--text-secondary); font-weight: var(--font-medium); margin-bottom: 8px; }
 .empty-state p { font-size: 14px; color: var(--text-muted); margin: 0; }
 
+/* ─── 全局书籍网格 ─── */
 .books-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px; }
 .book-card {
   cursor: pointer; border-radius: var(--radius-md); overflow: hidden;
@@ -208,19 +214,23 @@ a { cursor: pointer !important; }
 .book-info h4 { font-size: 14px; font-weight: var(--font-medium); color: var(--text-primary); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .book-info p { font-size: 12px; color: var(--text-muted); margin: 3px 0 0; }
 
+/* ─── 全局进度条 ─── */
 .progress-bar { height: 5px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--brand); border-radius: 3px; transition: width 0.4s var(--ease-out); }
 
+/* ─── 全局骨架屏 ─── */
 .book-card-skeleton .skeleton { background: var(--bg-card); border-radius: var(--radius-sm); animation: shimmer 1.5s infinite; }
 .skeleton-cover { aspect-ratio: 2/3; border-radius: var(--radius-md) !important; }
 .skeleton-title { height: 16px; width: 80%; margin-top: 14px; }
 .skeleton-author { height: 12px; width: 50%; margin-top: 8px; }
 @keyframes shimmer { 0%,100% { opacity: 0.35; } 50% { opacity: 0.65; } }
 
+/* ─── 全局滚动条 ─── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: var(--radius-full); }
 
+/* ─── 全局表单 select ─── */
 .form-select {
   appearance: none; -webkit-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -254,6 +264,7 @@ select:not(.form-select):hover { border-color: var(--brand); }
 select:not(.form-select):focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); }
 select:not(.form-select) option { background: var(--bg-card); color: var(--text-primary); }
 
+/* ─── 全局 toggle-switch（各组件统一复用） ─── */
 .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-slider { position: absolute; cursor: pointer !important; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: 0.3s; }
@@ -261,10 +272,29 @@ select:not(.form-select) option { background: var(--bg-card); color: var(--text-
 .toggle-switch input:checked + .toggle-slider { background: var(--brand); }
 .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
 
+/* ─── 全局 badge ─── */
 .badge { font-size: 11px; padding: 2px 10px; border-radius: 9999px; font-weight: 500; }
 .badge-vip { background: rgba(255,193,7,0.12); color: #ffc107; }
 
-.hidden { display: none; }
-.loading-spinner { width: 22px; height: 22px; border: 2px solid var(--border-color); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* ─── 角色风格加载动画（GSAP 驱动 4 色弹性小球） ─── */
+.loading-spinner {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: fit-content; height: 40px;
+}
+.loading-spinner::before,
+.loading-spinner::after {
+  display: none;
+}
+.loading-spinner .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+}
+.loading-dot-purple { background: #6C3FF5; }
+.loading-dot-black  { background: #2D2D2D; }
+.loading-dot-orange { background: #FF9B6B; }
+.loading-dot-yellow { background: #E8D754; }
+
+/* ─── 全局选中文字 ─── */
 ::selection { background: rgba(212,160,23,0.25); color: var(--text-primary); }
+
+/* ─── 全局隐藏 ─── */
+.hidden { display: none; }

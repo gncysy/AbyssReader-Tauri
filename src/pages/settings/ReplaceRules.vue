@@ -23,7 +23,7 @@
       <div v-for="rule in replaceRuleStore.rules" :key="rule.id" class="rule-card">
         <div class="rule-header">
           <span class="rule-name">{{ rule.name }}</span>
-          <span class="rule-badge">{{ rule.scope === 'title' ? '标题' : '正文' }}</span>
+          <span class="rule-badge">{{ rule.scopeTitle ? '标题' : '正文' }}</span>
           <span v-if="rule.isRegex" class="rule-badge rule-badge-regex">正则</span>
         </div>
         <div class="rule-row"><span class="rule-label">匹配</span><code>{{ rule.pattern }}</code></div>
@@ -44,15 +44,15 @@
       <div class="dialog-form">
         <div class="form-group"><label>规则名称</label><n-input v-model:value="form.name" placeholder="如：去除广告" /></div>
         <div class="form-group"><label>作用范围</label>
-          <select v-model="form.scope" class="form-select" name="replace-rule-scope" id="replace-rule-scope">
-            <option value="content">正文</option>
-            <option value="title">标题</option>
+          <select v-model="scopeMode" class="form-select">
+            <option :value="0">正文</option>
+            <option :value="1">标题</option>
           </select>
         </div>
         <div class="form-group"><label>匹配模式</label><n-input v-model:value="form.pattern" placeholder="正则或纯文本" /></div>
         <div class="form-group"><label>替换为</label><n-input v-model:value="form.replacement" placeholder="留空表示删除" /></div>
         <label class="checkbox-label">
-          <input type="checkbox" v-model="form.isRegex" name="replace-rule-is-regex" id="replace-rule-is-regex" />
+          <input type="checkbox" v-model="form.isRegex" />
           <span>正则表达式</span>
         </label>
       </div>
@@ -69,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { NModal, NInput, useMessage } from 'naive-ui'
 import { useReplaceRuleStore } from '@/store/replace-rules'
 import { network } from '@/api'
@@ -81,7 +81,12 @@ const replaceRuleStore = useReplaceRuleStore()
 
 const showDialog = ref(false)
 const editingRule = ref<ReplaceRule | null>(null)
-const form = ref({ name: '', scope: 'content' as 'title' | 'content', pattern: '', replacement: '', isRegex: false })
+const form = ref<Partial<ReplaceRule>>({ name: '', pattern: '', replacement: '', isRegex: false, isEnabled: true, scopeContent: true, scopeTitle: false })
+
+const scopeMode = computed({
+  get: () => form.value.scopeTitle ? 1 : 0,
+  set: (v: number) => { form.value.scopeTitle = v === 1; form.value.scopeContent = v === 0 }
+})
 
 const showPasteModal = ref(false)
 const pasteJson = ref('')
@@ -91,25 +96,41 @@ const importInput = ref<HTMLInputElement | null>(null)
 
 function openAddDialog() {
   editingRule.value = null
-  form.value = { name: '', scope: 'content', pattern: '', replacement: '', isRegex: false }
+  form.value = { name: '', pattern: '', replacement: '', isRegex: false, isEnabled: true, scopeContent: true, scopeTitle: false }
   showDialog.value = true
 }
 
 function editRule(rule: ReplaceRule) {
   editingRule.value = rule
-  form.value = { name: rule.name, scope: rule.scope, pattern: rule.pattern, replacement: rule.replacement, isRegex: rule.isRegex }
+  form.value = {
+    name: rule.name,
+    pattern: rule.pattern,
+    replacement: rule.replacement,
+    isRegex: rule.isRegex,
+    isEnabled: rule.isEnabled,
+    scopeTitle: rule.scopeTitle,
+    scopeContent: rule.scopeContent
+  }
   showDialog.value = true
 }
 
 async function saveRule() {
-  if (!form.value.name.trim() || !form.value.pattern.trim()) { message.warning('名称和匹配模式不能为空'); return }
+  if (!form.value.name || !form.value.pattern) { message.warning('名称和匹配模式不能为空'); return }
   if (editingRule.value) {
     await replaceRuleStore.updateRule(editingRule.value.id, { ...form.value })
     message.success('已更新')
   } else {
     await replaceRuleStore.addRule({
-      id: Date.now().toString(36), ...form.value,
-      isEnabled: true, bookName: '', bookOrigin: '', timeoutMs: 5000,
+      id: Date.now(),
+      name: form.value.name || '未命名',
+      pattern: form.value.pattern || '',
+      replacement: form.value.replacement || '',
+      isRegex: form.value.isRegex ?? true,
+      isEnabled: form.value.isEnabled ?? true,
+      scopeTitle: form.value.scopeTitle ?? false,
+      scopeContent: form.value.scopeContent ?? true,
+      timeoutMillisecond: 5000,
+      order: replaceRuleStore.rules.length,
     })
     message.success('已添加')
   }
@@ -147,10 +168,12 @@ async function importFromUrl() {
 }
 
 async function importRulesFromJson(jsonStr: string) {
-  let data: any = jsonStr
-  if (typeof data === 'string') {
-    if (data.trim() === '[object Object]') throw new Error('无效数据')
-    data = JSON.parse(data)
+  let data: any
+  if (typeof jsonStr === 'string') {
+    if (jsonStr.trim() === '[object Object]') throw new Error('无效数据')
+    data = JSON.parse(jsonStr)
+  } else {
+    data = jsonStr
   }
   let rules: any[] = []
   if (Array.isArray(data)) rules = data
@@ -160,19 +183,22 @@ async function importRulesFromJson(jsonStr: string) {
 
   let added = 0
   for (const item of rules) {
-    const pattern = item.regex || item.pattern || ''
-    if (!pattern || pattern.trim() === '') continue
+    const pattern = item.pattern || item.regex || ''
+    if (!pattern) continue
     const rule: ReplaceRule = {
-      id: Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-      name: item.replaceSummary || item.name || item.summary || '未命名规则',
+      id: item.id || Date.now(),
+      name: item.name || item.replaceSummary || item.summary || '未命名规则',
+      group: item.group || null,
       pattern,
       replacement: item.replacement || '',
-      isRegex: item.isRegex !== undefined ? item.isRegex : true,
-      isEnabled: item.enable !== undefined ? item.enable : true,
-      scope: 'content',
-      bookName: '',
-      bookOrigin: '',
-      timeoutMs: 5000,
+      scope: item.scope || item.useTo || null,
+      scopeTitle: item.scopeTitle === true || item.scope === 'title',
+      scopeContent: item.scopeContent !== false && item.scope !== 'title',
+      excludeScope: item.excludeScope || null,
+      isEnabled: item.isEnabled !== false,
+      isRegex: item.isRegex !== false,
+      timeoutMillisecond: item.timeoutMillisecond || 5000,
+      order: item.order || item.sortOrder || added,
     }
     await replaceRuleStore.addRule(rule)
     added++

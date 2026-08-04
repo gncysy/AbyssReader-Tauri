@@ -1,12 +1,9 @@
 use anyhow::Result;
 use deno_core::{JsRuntime, RuntimeOptions};
 use oxc_allocator::Allocator;
-use oxc_codegen::{Codegen, CodegenOptions};
-use oxc_parser::Parser;
-use oxc_semantic::SemanticBuilder;
-use oxc_span::SourceType;
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use oxc_ast::ast::Statement;
+use oxc_parser::{Parser, ParserReturn};
+use oxc_span::{SourceType, GetSpan, Span};
 
 const POLYFILL_CORE: &str = include_str!("polyfill_core.js");
 const POLYFILL_CRYPTO_SHA1: &str = include_str!("polyfill_crypto/sha1.js");
@@ -33,6 +30,7 @@ deno_core::extension!(
         crate::js_runtime::ops::op_java_base64_decode,
         crate::js_runtime::ops::op_java_md5_encode,
         crate::js_runtime::ops::op_java_aes_base64_decode,
+        crate::js_runtime::ops::op_java_des_base64_decode,
         crate::js_runtime::ops::op_java_put,
         crate::js_runtime::ops::op_java_get,
         crate::js_runtime::ops::op_java_get_cookie,
@@ -62,129 +60,243 @@ deno_core::extension!(
         crate::js_runtime::ops::op_java_rsa_set_private_key,
         crate::js_runtime::ops::op_java_rsa_encrypt,
         crate::js_runtime::ops::op_java_rsa_decrypt,
+        crate::js_runtime::ops::op_java_read_txt_file,
+        crate::js_runtime::ops::op_java_read_file_bytes_base64,
+        crate::js_runtime::ops::op_java_delete_file,
+        crate::js_runtime::ops::op_java_get_txt_in_folder,
+        crate::js_runtime::ops::op_java_file_exists,
+        crate::js_runtime::ops::op_java_unarchive_file,
+        crate::js_runtime::ops::op_java_zip_content,
+        crate::js_runtime::ops::op_java_sign,
+        crate::js_runtime::ops::op_java_query_ttf,
     ],
 );
 
-thread_local! {
-    static RUNTIME: RefCell<Option<JsRuntime>> = RefCell::new(None);
-}
-
-fn get_or_create_runtime() -> JsRuntime {
-    RUNTIME.with(|cell| {
-        let mut opt = cell.borrow_mut();
-        if let Some(rt) = opt.take() {
-            return rt;
-        }
-        let mut rt = JsRuntime::new(RuntimeOptions {
-            extensions: vec![abyss_java::init_ops_and_esm()],
-            ..Default::default()
-        });
-        rt.execute_script("polyfill_core.js", POLYFILL_CORE).ok();
-        rt.execute_script("polyfill_crypto_sha1.js", POLYFILL_CRYPTO_SHA1).ok();
-        rt.execute_script("polyfill_crypto_sha256.js", POLYFILL_CRYPTO_SHA256).ok();
-        rt.execute_script("polyfill_crypto_sha512.js", POLYFILL_CRYPTO_SHA512).ok();
-        rt.execute_script("polyfill_crypto_md5.js", POLYFILL_CRYPTO_MD5).ok();
-        rt.execute_script("polyfill_crypto_base64.js", POLYFILL_CRYPTO_BASE64).ok();
-        rt.execute_script("polyfill_crypto_padding.js", POLYFILL_CRYPTO_PADDING).ok();
-        rt.execute_script("polyfill_crypto_hmac.js", POLYFILL_CRYPTO_HMAC).ok();
-        rt.execute_script("polyfill_crypto_aes.js", POLYFILL_CRYPTO_AES).ok();
-        rt.execute_script("polyfill_crypto_des.js", POLYFILL_CRYPTO_DES).ok();
-        rt.execute_script("polyfill_crypto_api.js", POLYFILL_CRYPTO_API).ok();
-        rt.execute_script("polyfill_net.js", POLYFILL_NET).ok();
-        rt.execute_script("polyfill_dom.js", POLYFILL_DOM).ok();
-        crate::js_runtime::ops::load_cookies_from_file();
-        rt
-    })
-}
-
-fn return_runtime(rt: JsRuntime) {
-    RUNTIME.with(|cell| {
-        *cell.borrow_mut() = Some(rt);
+pub fn create_fresh_runtime() -> JsRuntime {
+    let mut rt = JsRuntime::new(RuntimeOptions {
+        extensions: vec![abyss_java::init_ops_and_esm()],
+        ..Default::default()
     });
+    rt.execute_script("polyfill_core.js", POLYFILL_CORE).ok();
+    rt.execute_script("polyfill_crypto_sha1.js", POLYFILL_CRYPTO_SHA1).ok();
+    rt.execute_script("polyfill_crypto_sha256.js", POLYFILL_CRYPTO_SHA256).ok();
+    rt.execute_script("polyfill_crypto_sha512.js", POLYFILL_CRYPTO_SHA512).ok();
+    rt.execute_script("polyfill_crypto_md5.js", POLYFILL_CRYPTO_MD5).ok();
+    rt.execute_script("polyfill_crypto_base64.js", POLYFILL_CRYPTO_BASE64).ok();
+    rt.execute_script("polyfill_crypto_padding.js", POLYFILL_CRYPTO_PADDING).ok();
+    rt.execute_script("polyfill_crypto_hmac.js", POLYFILL_CRYPTO_HMAC).ok();
+    rt.execute_script("polyfill_crypto_aes.js", POLYFILL_CRYPTO_AES).ok();
+    rt.execute_script("polyfill_crypto_des.js", POLYFILL_CRYPTO_DES).ok();
+    rt.execute_script("polyfill_crypto_api.js", POLYFILL_CRYPTO_API).ok();
+    rt.execute_script("polyfill_net.js", POLYFILL_NET).ok();
+    rt.execute_script("polyfill_dom.js", POLYFILL_DOM).ok();
+    crate::js_runtime::ops::load_cookies_from_file();
+    rt
 }
 
-fn escape_for_js_literal(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
-}
-
-fn find_and_fix_conflicts(
-    semantic: &oxc_semantic::Semantic,
-) -> HashMap<oxc_semantic::SymbolId, String> {
-    let scope_tree = semantic.scopes();
-    let mut rename_map: HashMap<oxc_semantic::SymbolId, String> = HashMap::new();
-    let mut scope_bindings: HashMap<
-        oxc_semantic::ScopeId,
-        Vec<(oxc_semantic::SymbolId, String)>,
-    > = HashMap::new();
-    for (scope_id, symbol_id, name) in scope_tree.iter_bindings() {
-        scope_bindings
-            .entry(scope_id)
-            .or_default()
-            .push((symbol_id, name.to_string()));
-    }
-    for (_scope_id, bindings) in &scope_bindings {
-        if bindings.len() <= 1 { continue; }
-        let mut name_to_symbols: HashMap<&str, Vec<oxc_semantic::SymbolId>> = HashMap::new();
-        for (symbol_id, name) in bindings {
-            name_to_symbols.entry(name.as_str()).or_default().push(*symbol_id);
-        }
-        for (name, symbols) in &name_to_symbols {
-            if symbols.len() <= 1 { continue; }
-            let all_names: HashSet<&str> = bindings.iter().map(|(_, n)| n.as_str()).collect();
-            for (i, symbol_id) in symbols.iter().enumerate() {
-                if i == 0 { continue; }
-                let new_name = format!("_{}", name);
-                let final_name = if all_names.contains(new_name.as_str()) {
-                    format!("_{}_v8", name)
-                } else { new_name };
-                rename_map.insert(*symbol_id, final_name);
-            }
-        }
-    }
-    rename_map
-}
-
-pub fn fix_v8_compat_public(code: &str) -> String {
-    let js = code
-        .trim()
-        .strip_prefix("@js:")
-        .or_else(|| code.trim().strip_prefix("<js>"))
-        .unwrap_or(code)
-        .trim_end()
-        .strip_suffix("</js>")
-        .unwrap_or(code)
-        .trim()
-        .to_string();
-    let allocator = Allocator::default();
-    let parser_return = Parser::new(&allocator, &js, SourceType::default()).parse();
-    if !parser_return.errors.is_empty() { return code.to_string(); }
-    let program = parser_return.program;
-    let mut semantic = SemanticBuilder::new().build(&program).semantic;
-    let rename_map = find_and_fix_conflicts(&semantic);
-    let symbol_table = semantic.symbols_mut();
-    for (symbol_id, new_name) in &rename_map {
-        symbol_table.set_name(*symbol_id, new_name);
-    }
-    Codegen::new()
-        .with_options(CodegenOptions { comments: true, ..CodegenOptions::default() })
-        .build(&program)
-        .code
+pub fn execute_in_runtime(rt: &mut JsRuntime, code: &str, context_json: &serde_json::Value) -> Result<String, String> {
+    let ctx = serde_json::to_string(context_json).unwrap_or_else(|_| "{}".into());
+    execute_impl(rt, code, &ctx)
 }
 
 pub fn execute(code: &str, context_json: &str) -> Result<String, String> {
-    let mut rt = get_or_create_runtime();
+    let mut rt = create_fresh_runtime();
+    execute_impl(&mut rt, code, context_json)
+}
+
+fn st<'a>(code: &'a str, span: Span) -> &'a str {
+    &code[span.start as usize..span.end as usize]
+}
+
+fn between<'a>(code: &'a str, from: Span, to: Span) -> &'a str {
+    &code[from.end as usize..to.start as usize]
+}
+
+fn is_block(s: &Statement) -> bool {
+    matches!(s, Statement::BlockStatement(_))
+}
+
+fn needs_wrap(s: &Statement) -> bool {
+    matches!(
+        s,
+        Statement::ExpressionStatement(_)
+            | Statement::IfStatement(_)
+            | Statement::SwitchStatement(_)
+            | Statement::ForStatement(_)
+            | Statement::WhileStatement(_)
+            | Statement::DoWhileStatement(_)
+            | Statement::WithStatement(_)
+            | Statement::ForInStatement(_)
+            | Statement::ForOfStatement(_)
+            | Statement::BlockStatement(_)
+    )
+}
+
+fn to_expr(code: &str, s: &Statement) -> String {
+    match s {
+        Statement::ExpressionStatement(e) => st(code, e.span()).trim_end_matches(';').trim().to_string(),
+        Statement::BlockStatement(b) => {
+            if b.body.is_empty() { return "undefined".to_string(); }
+            to_expr(code, b.body.last().unwrap())
+        }
+        Statement::IfStatement(i) => {
+            format!(
+                "({} ? {} : {})",
+                st(code, i.test.span()),
+                to_expr(code, &i.consequent),
+                i.alternate.as_ref().map(|a| to_expr(code, a)).unwrap_or_else(|| "undefined".to_string())
+            )
+        }
+        _ => format!("(function() {{ {} }})()", to_ret(code, s)),
+    }
+}
+
+fn to_ret(code: &str, s: &Statement) -> String {
+    match s {
+        Statement::ExpressionStatement(e) => {
+            format!("return {};", st(code, e.span()).trim_end_matches(';').trim())
+        }
+        Statement::BlockStatement(b) => {
+            if b.body.is_empty() { return "{}".to_string(); }
+            let mut inner = String::new();
+            let len = b.body.len();
+            for i in 0..len {
+                let s = &b.body[i];
+                if i > 0 {
+                    inner.push_str(between(code, b.body[i-1].span(), s.span()));
+                }
+                if i < len - 1 {
+                    inner.push_str(st(code, s.span()));
+                } else if needs_wrap(s) {
+                    inner.push_str(&to_ret(code, s));
+                } else {
+                    inner.push_str(st(code, s.span()));
+                }
+            }
+            format!("{{ {} }}", inner)
+        }
+        Statement::IfStatement(i) => {
+            let cons = &i.consequent;
+            let then_val = if is_block(cons) {
+                format!("(function() {})()", to_ret(code, cons))
+            } else {
+                format!("(function() {{ {} }})()", to_ret(code, cons))
+            };
+            let else_val = i.alternate.as_ref().map(|a| {
+                if is_block(a) { format!("(function() {})()", to_ret(code, a)) }
+                else { format!("(function() {{ {} }})()", to_ret(code, a)) }
+            }).unwrap_or_else(|| "undefined".to_string());
+            format!("return ({} ? {} : {});", st(code, i.test.span()), then_val, else_val)
+        }
+        Statement::SwitchStatement(sw) => {
+            let mut cases = String::new();
+            for c in &sw.cases {
+                if c.consequent.is_empty() {
+                    cases.push_str(st(code, c.span()));
+                } else {
+                    let first_sp = c.consequent.first().unwrap().span();
+                    let hdr = &code[c.span().start as usize..first_sp.start as usize];
+                    let last = c.consequent.last().unwrap();
+                    let lt = if needs_wrap(last) { to_ret(code, last) } else { st(code, last.span()).to_string() };
+                    let mut pre = String::new();
+                    let cl = c.consequent.len();
+                    for i in 0..cl - 1 {
+                        if i > 0 {
+                            pre.push_str(between(code, c.consequent[i-1].span(), c.consequent[i].span()));
+                        }
+                        pre.push_str(st(code, c.consequent[i].span()));
+                    }
+                    if cl > 1 {
+                        pre.push_str(between(code, c.consequent[cl-2].span(), last.span()));
+                    }
+                    cases.push_str(&format!("{}{}{}", hdr, pre, lt));
+                }
+            }
+            format!("return (function() {{ switch ({}) {{ {} }} }})();", st(code, sw.discriminant.span()), cases)
+        }
+        Statement::ForStatement(f) => {
+            let init = f.init.as_ref().map(|i| st(code, i.span())).unwrap_or("");
+            let test = f.test.as_ref().map(|t| st(code, t.span())).unwrap_or("");
+            let update = f.update.as_ref().map(|u| st(code, u.span())).unwrap_or("");
+            let body = to_expr(code, &f.body);
+            format!("var __last = undefined; for ({}; {}; {}) {{ __last = ({}); }} return __last;", init, test, update, body)
+        }
+        Statement::WhileStatement(w) => {
+            let body = to_expr(code, &w.body);
+            format!("var __last = undefined; while ({}) {{ __last = ({}); }} return __last;", st(code, w.test.span()), body)
+        }
+        Statement::DoWhileStatement(d) => {
+            let body = to_expr(code, &d.body);
+            format!("var __last = undefined; do {{ __last = ({}); }} while ({}); return __last;", body, st(code, d.test.span()))
+        }
+        Statement::ForInStatement(f) => {
+            let body = to_expr(code, &f.body);
+            format!("var __last = undefined; for ({} in {}) {{ __last = ({}); }} return __last;", st(code, f.left.span()), st(code, f.right.span()), body)
+        }
+        Statement::ForOfStatement(f) => {
+            let body = to_expr(code, &f.body);
+            format!("var __last = undefined; for ({} of {}) {{ __last = ({}); }} return __last;", st(code, f.left.span()), st(code, f.right.span()), body)
+        }
+        Statement::WithStatement(w) => {
+            format!("return (function() {{ with ({}) {{ {} }} }})();", st(code, w.object.span()), to_ret(code, &w.body))
+        }
+        Statement::LabeledStatement(l) => {
+            if needs_wrap(&l.body) {
+                format!("{}: (function() {{ {} }})()", st(code, l.label.span()), to_ret(code, &l.body))
+            } else {
+                format!("{}: {}", st(code, l.label.span()), st(code, l.body.span()))
+            }
+        }
+        _ => st(code, s.span()).to_string(),
+    }
+}
+
+fn wrap_user_code(code: &str) -> String {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path("rule.js").unwrap_or_default();
+    let ParserReturn { program, errors, .. } =
+        Parser::new(&allocator, code, source_type).parse();
+
+    if !errors.is_empty() { return code.to_string(); }
+    let body = &program.body;
+    if body.is_empty() { return code.to_string(); }
+
+    let last = body.last().unwrap();
+    if matches!(
+        last,
+        Statement::ReturnStatement(_)
+            | Statement::ThrowStatement(_)
+            | Statement::TryStatement(_)
+            | Statement::FunctionDeclaration(_)
+            | Statement::ClassDeclaration(_)
+            | Statement::VariableDeclaration(_)
+            | Statement::ImportDeclaration(_)
+            | Statement::ExportNamedDeclaration(_)
+            | Statement::ExportDefaultDeclaration(_)
+            | Statement::EmptyStatement(_)
+            | Statement::DebuggerStatement(_)
+    ) {
+        return code.to_string();
+    }
+
+    let mut result = String::new();
+    let len = body.len();
+    for i in 0..len - 1 {
+        result.push_str(st(code, body[i].span()));
+        result.push_str(between(code, body[i].span(), body[i+1].span()));
+    }
+    result.push_str(&to_ret(code, last));
+    result
+}
+
+fn execute_impl(rt: &mut JsRuntime, code: &str, context_json: &str) -> Result<String, String> {
+    let wrapped = wrap_user_code(code);
 
     let inject = format!("globalThis.__sandbox_data = {};", context_json);
     if let Err(e) = rt.execute_script("inject_context", inject) {
-        return_runtime(rt);
         return Err(format!("注入上下文失败: {}", e));
     }
 
-    let escaped_code = escape_for_js_literal(code);
     let wrapper = format!(
         r#"
         (function() {{
@@ -197,12 +309,26 @@ pub fn execute(code: &str, context_json: &str) -> Result<String, String> {
             var page = __data.page || 1;
             var book = __data.book || {{}};
             var chapter = __data.chapter || {{}};
+            var title = chapter.title || '';
+            var nextChapterUrl = __data.nextChapterUrl || '';
+            var rssArticle = __data.rssArticle || null;
+            var fromBookInfo = __data.fromBookInfo || false;
             var java = globalThis.java || {{}};
             var cookie = globalThis.cookie || {{}};
             var Packages = globalThis.Packages || {{}};
             var cache = globalThis.cache || {{}};
+            var org = globalThis.org || Packages.org || {{}};
+
+            if (cache && typeof cache.putMemory !== 'function') {{
+                cache._memory = cache._memory || {{}};
+                cache.putMemory = function(k, v) {{ this._memory[k] = v; }};
+                cache.getFromMemory = function(k) {{ return this._memory[k] || null; }};
+                cache.deleteMemory = function(k) {{ delete this._memory[k]; }};
+            }}
 
             if (source && !source.getKey) source.getKey = function() {{ return source.bookSourceUrl || ''; }};
+            if (source && !source.getVariable) source.getVariable = function(k) {{ return (java.get('source_' + k)) || ''; }};
+            if (source && !source.setVariable) source.setVariable = function(k, v) {{ java.put('source_' + k, String(v)); return v; }};
             if (source && !source.getTag) source.getTag = function() {{ return source.bookSourceName || ''; }};
             if (source && !source.getLoginHeader) source.getLoginHeader = function() {{ return java.getLoginHeader(); }};
             if (source && !source.putLoginHeader) source.putLoginHeader = function(h) {{ java.putLoginHeader(h); }};
@@ -222,27 +348,41 @@ pub fn execute(code: &str, context_json: &str) -> Result<String, String> {
 
             try {{ globalThis.__loadJsLib(source, java); }} catch(e) {{ }}
 
-            var evalResult;
+            var execResult;
             try {{
-                evalResult = eval('{}');
+                execResult = (function(org_local, Packages_local, Jsoup_local, Element_local, Elements_local) {{
+                    var org = org_local;
+                    var Packages = Packages_local;
+                    var Jsoup = Jsoup_local;
+                    var Element = Element_local;
+                    var Elements = Elements_local;
+                    {0}
+                }})(org, Packages, (org.jsoup && org.jsoup.Jsoup), (org.jsoup && org.jsoup.select && org.jsoup.select.Element), (org.jsoup && org.jsoup.select && org.jsoup.select.Elements));
             }} catch(e) {{
-                evalResult = undefined;
-                result = JSON.stringify({{ error: true, message: e.message || String(e), stack: (e.stack || '').substring(0, 1000) }});
+                execResult = {{ __error: true, __message: e.message || String(e), __stack: (e.stack || '').substring(0, 1000) }};
             }}
-            if (evalResult !== undefined && evalResult !== null) {{
-                result = evalResult;
+            if (execResult === undefined && typeof result !== 'undefined' && result !== '') {{
+                execResult = result;
             }}
 
-            if (result === null || result === undefined) {{
-                return '';
+            if (execResult && typeof execResult === 'object' && execResult !== null) {{
+                if (typeof execResult.html === 'function') {{
+                    execResult = execResult.html();
+                }} else if (typeof execResult.outerHtml === 'function') {{
+                    execResult = execResult.outerHtml();
+                }} else if (execResult.__error) {{
+                    return JSON.stringify({{ error: true, message: execResult.__message, stack: execResult.__stack }});
+                }}
             }}
-            if (typeof result === 'object') {{
-                try {{ return JSON.stringify(result); }} catch(e) {{ return ''; }}
+
+            if (execResult === null || execResult === undefined) return '';
+            if (typeof execResult === 'object' && !(execResult instanceof String)) {{
+                try {{ return JSON.stringify(execResult); }} catch(e) {{ return ''; }}
             }}
-            return String(result);
+            return String(execResult);
         }})()
         "#,
-        escaped_code
+        wrapped
     );
 
     let result_str = match rt.execute_script("rule_script", wrapper) {
@@ -252,11 +392,16 @@ pub fn execute(code: &str, context_json: &str) -> Result<String, String> {
             local.to_rust_string_lossy(scope)
         }
         Err(e) => {
-            return_runtime(rt);
             return Err(format!("执行失败: {}", e));
         }
     };
 
-    return_runtime(rt);
     Ok(result_str)
 }
+
+pub fn fix_v8_compat_public(_code: &str) -> String {
+    _code.to_string()
+}
+
+
+

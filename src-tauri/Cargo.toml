@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 arboard = "3"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
@@ -37,6 +37,7 @@ urlencoding = "2.1"
 deno_core = "0.315"
 scraper = "0.20"
 aes = "0.8"
+des = "0.8"
 cbc = "0.1"
 uuid = { version = "1", features = ["v4"] }
 open = "5"
@@ -48,12 +49,17 @@ oxc_allocator = "0.47"
 oxc_span = "0.47"
 oxc_semantic = "0.47"
 rsa = { version = "0.9", features = ["pem", "sha2"] }
+sha2 = "0.10"
 pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 rand = "0.8"
 dirs-next = "2.0"
+zip = "2"
+ttf-parser = "0.24"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [profile.dev]
 debug = 0
+
+

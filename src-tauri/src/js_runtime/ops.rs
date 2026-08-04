@@ -27,15 +27,30 @@ fn emit_log(level: &str, msg: &str) {
 }
 
 fn parse_ajax_url(raw: &str) -> (String, Option<String>, Option<HashMap<String, String>>, Option<String>) {
-    if let Some(comma) = raw.find(",{") {
-        let url = raw[..comma].to_string();
-        let fixed = raw[comma+1..].replace('\'', "\"");
+    let comma_brace_pos = raw.rfind(",{");
+    if let Some(pos) = comma_brace_pos {
+        let url = raw[..pos].to_string();
+        let rest = &raw[pos+1..];
+        let fixed = rest.replace('\'', "\"");
         let parsed = serde_json::from_str::<serde_json::Value>(&fixed).ok();
         let method = parsed.as_ref().and_then(|v| v.get("method").and_then(|m| m.as_str()).map(|s| s.to_uppercase()));
-        let headers = parsed.as_ref().and_then(|v| v.get("headers").cloned()).and_then(|h| serde_json::from_str::<HashMap<String, String>>(&h.to_string()).ok());
+        let mut headers = parsed.as_ref().and_then(|v| v.get("headers").cloned()).and_then(|h| serde_json::from_str::<HashMap<String, String>>(&h.to_string()).ok());
+        if let Some(ref mut h) = headers {
+            if !h.contains_key("Referer") || h.get("Referer").map(|s| s.is_empty()).unwrap_or(true) {
+                h.insert("Referer".to_string(), "https://hanyu.baidu.com/".to_string());
+            }
+        } else {
+            let mut h = HashMap::new();
+            h.insert("Referer".to_string(), "https://hanyu.baidu.com/".to_string());
+            headers = Some(h);
+        }
         let body = parsed.as_ref().and_then(|v| v.get("body").and_then(|b| if b.is_string() { Some(b.as_str().unwrap().to_string()) } else { Some(b.to_string()) }));
         (url, method, headers, body)
-    } else { (raw.to_string(), None, None, None) }
+    } else {
+        let mut h = HashMap::new();
+        h.insert("Referer".to_string(), "https://hanyu.baidu.com/".to_string());
+        (raw.to_string(), None, Some(h), None)
+    }
 }
 
 struct RateLimitRecord { time: i64, access_limit: i32, interval: i64, frequency: i32 }
@@ -58,14 +73,22 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
-            let client = reqwest::Client::builder().user_agent(get_ua()).danger_accept_invalid_certs(true).build().unwrap();
+            let client = reqwest::Client::builder()
+                .user_agent(get_ua())
+                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap();
             while let Ok(((url, method, headers, body), reply_tx)) = rx.recv() {
                 rate_limit(&url);
                 let mut req = if method.as_deref() == Some("POST") { client.post(&url) } else { client.get(&url) };
                 if let Some(h) = &headers { for (k, v) in h { req = req.header(k.as_str(), v.as_str()); } }
                 if let Some(b) = &body { req = req.body(b.clone()); }
                 let result = match req.send().await {
-                    Ok(resp) => { match resp.text().await { Ok(text) => Ok(text), Err(e) => Err(format!("response error: {}", e)) } },
+                    Ok(resp) => { match resp.text().await {
+                        Ok(text) => Ok(text),
+                        Err(e) => Err(format!("response error: {}", e)),
+                    }},
                     Err(e) => Err(format!("request error: {}", e)),
                 };
                 let _ = reply_tx.send(result);
@@ -80,7 +103,9 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
     let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
     if AJAX_TX.send(((req_url, method, headers, body), reply_tx)).is_ok() {
         match reply_rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(Ok(text)) => text, Ok(Err(e)) => format!("error: {}", e), Err(_) => "error: timeout".to_string(),
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => format!("error: {}", e),
+            Err(_) => "error: timeout".to_string(),
         }
     } else { "error: send failed".to_string() }
 }
@@ -117,8 +142,7 @@ static AJAX_TX: LazyLock<SyncSender<(AjaxRequest, SyncSender<AjaxResponse>)>> = 
     use scraper::Html;
     let doc = Html::parse_document(&html);
     let root = element_to_json(&doc.root_element());
-    let result = serde_json::json!({ "html": html, "root": root });
-    result.to_string()
+    serde_json::json!({ "html": html, "root": root }).to_string()
 }
 
 fn element_to_json(el: &scraper::ElementRef) -> serde_json::Value {
@@ -153,8 +177,26 @@ fn element_to_json(el: &scraper::ElementRef) -> serde_json::Value {
     let key_bytes = key_str.as_bytes(); let mut key_arr = [0u8; 16]; let len = key_bytes.len().min(16); key_arr[..len].copy_from_slice(&key_bytes[..len]);
     let iv_bytes = iv_str.as_bytes(); let mut iv_arr = [0u8; 16]; let iv_len = iv_bytes.len().min(16); iv_arr[..iv_len].copy_from_slice(&iv_bytes[..iv_len]);
     let cipher = <Decryptor<Aes128> as KeyIvInit>::new(&key_arr.into(), &iv_arr.into());
-    let mut buf = decoded; cipher.decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf).ok();
-    String::from_utf8_lossy(&buf).trim_end_matches(|c: char| c == '\0' || c.is_ascii_control()).to_string()
+    let mut buf = decoded;
+    match cipher.decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf) {
+        Ok(decrypted) => String::from_utf8_lossy(decrypted).trim_end_matches(|c: char| c == '\0' || c.is_ascii_control()).to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+#[op2] #[string] pub fn op_java_des_base64_decode(#[string] data: String, #[string] key: String) -> String {
+    use des::cipher::{KeyIvInit, BlockDecryptMut};
+    use base64::Engine;
+    let decoded = match base64::engine::general_purpose::STANDARD.decode(&data) { Ok(d) => d, Err(_) => return String::new() };
+    let (key_str, iv_str) = if let Some(pos) = key.find("::") { (&key[..pos], &key[pos+2..]) } else { (key.as_str(), "") };
+    let key_bytes = key_str.as_bytes(); let mut key_arr = [0u8; 8]; let len = key_bytes.len().min(8); key_arr[..len].copy_from_slice(&key_bytes[..len]);
+    let iv_bytes = iv_str.as_bytes(); let mut iv_arr = [0u8; 8]; let iv_len = iv_bytes.len().min(8); iv_arr[..iv_len].copy_from_slice(&iv_bytes[..iv_len]);
+    let cipher = <cbc::Decryptor<des::Des> as KeyIvInit>::new(&key_arr.into(), &iv_arr.into());
+    let mut buf = decoded;
+    match cipher.decrypt_padded_mut::<des::cipher::block_padding::Pkcs7>(&mut buf) {
+        Ok(decrypted) => String::from_utf8_lossy(decrypted).trim_end_matches(|c: char| c == '\0' || c.is_ascii_control()).to_string(),
+        Err(_) => String::new(),
+    }
 }
 
 static STORAGE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, HashMap<String, String>>>> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
@@ -201,7 +243,25 @@ pub fn load_cookies_from_file() -> String {
 #[op2] #[string] pub fn op_java_get_verification_code(#[string] svg: String) -> String { svg }
 #[op2] #[string] pub fn op_java_show_photo(#[string] src: String) -> String { src }
 #[op2] #[string] pub fn op_java_open_video_player(#[string] url: String, #[string] title: String) -> String { let _ = open::that(&url); title }
-#[op2] #[string] pub fn op_java_download_file(#[string] url: String) -> String { let dir = get_cache_dir(); std::fs::create_dir_all(&dir).ok(); let hash = format!("{:x}", md5::compute(url.as_bytes())); let file_path = dir.join(&hash); let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1); if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() { if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(60)) { let _ = std::fs::write(&file_path, &text); return text; } } String::new() }
+
+#[op2] #[string] pub fn op_java_download_file(#[string] url: String) -> String {
+    let dir = get_cache_dir();
+    std::fs::create_dir_all(&dir).ok();
+    let hash = format!("{:x}", md5::compute(url.as_bytes()));
+    let file_path = dir.join(&hash);
+    if file_path.exists() {
+        return file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    }
+    let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
+    if AJAX_TX.send(((url.clone(), None, None, None), reply_tx)).is_ok() {
+        if let Ok(Ok(text)) = reply_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            let _ = std::fs::write(&file_path, &text);
+            return file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        }
+    }
+    String::new()
+}
+
 #[op2(fast)] pub fn op_java_up_login_data(#[string] _info: String) {}
 #[op2(fast)] pub fn op_java_refresh_explore() {}
 #[op2(fast)] pub fn op_java_refresh_book_info() {}
@@ -225,12 +285,164 @@ fn get_cache_dir() -> PathBuf { LIB_CACHE_DIR.get().cloned().unwrap_or_else(|| s
     String::new()
 }
 
+// ─── 文件操作 ops ───
+
+fn get_safe_path(path: &str) -> Result<PathBuf, String> {
+    let cache_dir = get_cache_dir();
+    let base = cache_dir.parent().unwrap_or(&cache_dir).to_path_buf();
+    let clean = path.trim_start_matches('/').trim_start_matches('\\');
+    let resolved = base.join(clean);
+    let canonical = resolved.canonicalize().unwrap_or(resolved.clone());
+    if !canonical.starts_with(&base) {
+        return Err("非法路径".into());
+    }
+    Ok(canonical)
+}
+
+#[op2] #[string] pub fn op_java_read_txt_file(#[string] path: String) -> String {
+    match get_safe_path(&path) {
+        Ok(p) => { if p.exists() { std::fs::read_to_string(&p).unwrap_or_default() } else { String::new() } }
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+#[op2] #[string] pub fn op_java_read_file_bytes_base64(#[string] path: String) -> String {
+    match get_safe_path(&path) {
+        Ok(p) => {
+            if p.exists() {
+                use base64::Engine;
+                match std::fs::read(&p) { Ok(bytes) => base64::engine::general_purpose::STANDARD.encode(&bytes), Err(_) => String::new() }
+            } else { String::new() }
+        }
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+#[op2] #[string] pub fn op_java_delete_file(#[string] path: String) -> String {
+    match get_safe_path(&path) {
+        Ok(p) => {
+            if p.exists() {
+                if p.is_dir() { match std::fs::remove_dir_all(&p) { Ok(_) => "true".into(), Err(e) => format!("error: {}", e) } }
+                else { match std::fs::remove_file(&p) { Ok(_) => "true".into(), Err(e) => format!("error: {}", e) } }
+            } else { "true".into() }
+        }
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+#[op2] #[string] pub fn op_java_get_txt_in_folder(#[string] path: String) -> String {
+    match get_safe_path(&path) {
+        Ok(p) => {
+            if p.is_dir() {
+                let mut contents = String::new();
+                if let Ok(entries) = std::fs::read_dir(&p) {
+                    for entry in entries.flatten() {
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            contents.push_str(&content); contents.push('\n');
+                        }
+                    }
+                }
+                contents.trim_end().to_string()
+            } else { String::new() }
+        }
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+#[op2] #[string] pub fn op_java_file_exists(#[string] path: String) -> String {
+    match get_safe_path(&path) { Ok(p) => if p.exists() { "true".into() } else { "false".into() }, Err(_) => "false".into() }
+}
+
+// ─── 压缩文件 ops ───
+
+#[op2] #[string] pub fn op_java_unarchive_file(#[string] path: String) -> String {
+    match get_safe_path(&path) {
+        Ok(p) => {
+            if !p.exists() { return format!("error: 文件不存在"); }
+            let out_dir = p.parent().unwrap_or(&p).join(format!("_extracted_{:x}", md5::compute(path.as_bytes())));
+            let _ = std::fs::create_dir_all(&out_dir);
+            let file = match std::fs::File::open(&p) { Ok(f) => f, Err(e) => return format!("error: {}", e) };
+            let reader = std::io::BufReader::new(file);
+            match zip::ZipArchive::new(reader) {
+                Ok(mut archive) => {
+                    for i in 0..archive.len() {
+                        if let Ok(mut entry) = archive.by_index(i) {
+                            if let Some(name) = entry.enclosed_name() {
+                                let out_path = out_dir.join(name);
+                                if entry.is_dir() { let _ = std::fs::create_dir_all(&out_path); }
+                                else {
+                                    if let Some(parent) = out_path.parent() { let _ = std::fs::create_dir_all(parent); }
+                                    if let Ok(mut outfile) = std::fs::File::create(&out_path) {
+                                        let _ = std::io::copy(&mut entry, &mut outfile);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    out_dir.to_string_lossy().to_string()
+                }
+                Err(_) => "error: 不支持的压缩格式".into(),
+            }
+        }
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+#[op2] #[string] pub fn op_java_zip_content(#[string] data: String, #[string] path_in_zip: String) -> String {
+    let bytes: Vec<u8> = if data.starts_with("http://") || data.starts_with("https://") {
+        let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
+        if AJAX_TX.send(((data.clone(), None, None, None), reply_tx)).is_ok() {
+            match reply_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(Ok(text)) => text.into_bytes(),
+                _ => return String::new(),
+            }
+        } else { return String::new(); }
+    } else {
+        use base64::Engine;
+        match base64::engine::general_purpose::STANDARD.decode(&data) { Ok(b) => b, Err(_) => return String::new() }
+    };
+    let cursor = std::io::Cursor::new(bytes);
+    match zip::ZipArchive::new(cursor) {
+        Ok(mut archive) => {
+            for i in 0..archive.len() {
+                if let Ok(mut entry) = archive.by_index(i) {
+                    if entry.name() == path_in_zip && !entry.is_dir() {
+                        let mut content = String::new();
+                        if std::io::Read::read_to_string(&mut entry, &mut content).is_ok() {
+                            return content;
+                        }
+                    }
+                }
+            }
+            String::new()
+        }
+        Err(_) => String::new(),
+    }
+}
+
+// ─── 签名 ───
+
+#[op2] #[string] pub fn op_java_sign(#[string] source: String, #[string] data: String, #[string] _algorithm: String) -> String {
+    use rsa::pkcs1v15::SigningKey;
+    use rsa::signature::{Signer, SignatureEncoding};
+    use sha2::Sha256;
+    let store = RSA_KEY_STORE.lock();
+    let entry = match store.get(&source) { Some(e) => e, None => return "error: no key set".into() };
+    let priv_key = match &entry.0 { Some(k) => k, None => return "error: no private key".into() };
+    let signing_key = SigningKey::<Sha256>::new(priv_key.clone());
+    match signing_key.try_sign(data.as_bytes()) {
+        Ok(sig) => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes()),
+        Err(e) => format!("error: {}", e),
+    }
+}
+
+// ─── Cookie ───
+
 #[op2] #[string] pub fn op_java_save_cookies() -> String { let store = COOKIE_STORE.lock(); match serde_json::to_string(&*store) { Ok(json) => { if let Some(dir) = COOKIE_SAVE_PATH.get() { let _ = std::fs::write(dir.join("cookies.json"), &json); } json } Err(e) => format!("error: {}", e) } }
 #[op2] #[string] pub fn op_java_load_cookies() -> String { load_cookies_from_file() }
 
-// ============================================
-// RSA
-// ============================================
+// ─── RSA ───
+
 use rsa::{RsaPrivateKey, RsaPublicKey, Pkcs1v15Encrypt};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 
@@ -291,3 +503,87 @@ static RSA_KEY_STORE: LazyLock<parking_lot::Mutex<HashMap<String, (Option<RsaPri
         Err(e) => format!("error: {}", e)
     }
 }
+
+// ─── QueryTTF 字体解析 ───
+
+static FONT_CACHE: LazyLock<parking_lot::Mutex<HashMap<String, Vec<u8>>>> = LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+fn load_font_bytes(data: &str) -> Result<Vec<u8>, String> {
+    let cache_key = format!("{:x}", md5::compute(data.as_bytes()));
+    if let Some(bytes) = FONT_CACHE.lock().get(&cache_key) {
+        return Ok(bytes.clone());
+    }
+    let bytes: Vec<u8> = if data.starts_with("http://") || data.starts_with("https://") {
+        let (reply_tx, reply_rx): (SyncSender<AjaxResponse>, Receiver<AjaxResponse>) = sync_channel(1);
+        if AJAX_TX.send(((data.to_string(), None, None, None), reply_tx)).is_ok() {
+            match reply_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Ok(text)) => text.into_bytes(),
+                _ => return Err("下载字体失败".into()),
+            }
+        } else { return Err("下载字体失败".into()); }
+    } else {
+        use base64::Engine;
+        match base64::engine::general_purpose::STANDARD.decode(data) {
+            Ok(b) => b,
+            Err(_) => return Err("base64 解码失败".into()),
+        }
+    };
+    let mut cache = FONT_CACHE.lock();
+    if cache.len() > 16 { cache.clear(); }
+    cache.insert(cache_key, bytes.clone());
+    Ok(bytes)
+}
+
+fn parse_glyf_data(face: &ttf_parser::Face, glyph_id: u16) -> Option<Vec<u8>> {
+    let bbox = face.glyph_bounding_box(ttf_parser::GlyphId(glyph_id))?;
+    let mut data = Vec::with_capacity(16);
+    data.extend_from_slice(&bbox.x_min.to_le_bytes());
+    data.extend_from_slice(&bbox.y_min.to_le_bytes());
+    data.extend_from_slice(&bbox.width().to_le_bytes());
+    data.extend_from_slice(&bbox.height().to_le_bytes());
+    Some(data)
+}
+
+#[op2] #[string] pub fn op_java_query_ttf(#[string] data: String) -> String {
+    let bytes = match load_font_bytes(&data) {
+        Ok(b) => b,
+        Err(e) => return format!("error: {}", e),
+    };
+    let face = match ttf_parser::Face::parse(&bytes, 0) {
+        Ok(f) => f,
+        Err(_) => return "error: 字体解析失败".into(),
+    };
+
+    let mut cmap_list = Vec::new();
+    for subtable in face.tables().cmap.into_iter().flat_map(|c| c.subtables) {
+        if subtable.is_unicode() {
+            subtable.codepoints(|cp| {
+                if let Some(glyph_id) = subtable.glyph_index(cp) {
+                    cmap_list.push((cp, glyph_id.0));
+                }
+            });
+        }
+    }
+
+    let mut glyf_map = Vec::new();
+    for (cp, gid) in &cmap_list {
+        if let Some(data) = parse_glyf_data(&face, *gid) {
+            glyf_map.push((*cp, *gid, base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data)));
+        }
+    }
+
+    let result = serde_json::json!({
+        "cmap": cmap_list,
+        "glyfMap": glyf_map.iter().map(|(cp, gid, data)| {
+            serde_json::json!({ "cp": cp, "gid": gid, "data": data })
+        }).collect::<Vec<_>>(),
+        "numberOfGlyphs": face.number_of_glyphs(),
+        "unitsPerEm": face.units_per_em(),
+    });
+    result.to_string()
+}
+
+
+
+
+

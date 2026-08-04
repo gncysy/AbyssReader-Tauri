@@ -7,7 +7,12 @@ export const useReplaceRuleStore = defineStore('replaceRules', () => {
   const rules = ref<ReplaceRule[]>([])
 
   async function loadRules() {
-    try { rules.value = (await store.get('replaceRule')) || [] } catch {}
+    try {
+      const raw = await store.get('replaceRule')
+      rules.value = Array.isArray(raw) ? raw : []
+    } catch {
+      rules.value = []
+    }
   }
 
   async function saveRules() {
@@ -15,12 +20,12 @@ export const useReplaceRuleStore = defineStore('replaceRules', () => {
   }
 
   async function addRule(rule: ReplaceRule) { rules.value.push(rule); await saveRules() }
-  async function updateRule(id: string, updates: Partial<ReplaceRule>) {
+  async function updateRule(id: number, updates: Partial<ReplaceRule>) {
     const idx = rules.value.findIndex(r => r.id === id)
     if (idx !== -1) { rules.value[idx] = { ...rules.value[idx], ...updates }; await saveRules() }
   }
-  async function removeRule(id: string) { rules.value = rules.value.filter(r => r.id !== id); await saveRules() }
-  async function toggleRule(id: string) {
+  async function removeRule(id: number) { rules.value = rules.value.filter(r => r.id !== id); await saveRules() }
+  async function toggleRule(id: number) {
     const idx = rules.value.findIndex(r => r.id === id)
     if (idx !== -1) { rules.value[idx].isEnabled = !rules.value[idx].isEnabled; await saveRules() }
   }

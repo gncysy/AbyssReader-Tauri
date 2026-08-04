@@ -96,10 +96,4 @@ function setReSegment(val: boolean) { readingStore.setReSegment(val) }
 .option-btn { padding: 6px 12px; font-size: 13px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; transition: color 0.18s, border-color 0.18s; }
 .option-btn:hover { color: var(--text-primary); border-color: var(--brand); }
 .option-btn.active { color: var(--brand); border-color: var(--brand); background: var(--bg-active); }
-.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; cursor: pointer; }
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: absolute; inset: 0; background: var(--bg-hover); border-radius: 24px; transition: background 0.2s; }
-.toggle-slider::before { content: ''; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; background: var(--text-muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
-.toggle-switch input:checked + .toggle-slider { background: var(--brand); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); background: #fff; }
 </style>

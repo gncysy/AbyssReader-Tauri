@@ -5,7 +5,12 @@
         <n-dialog-provider>
           <div class="app-shell" :data-theme="effectiveTheme">
             <div class="titlebar" :data-theme="effectiveTheme" @dblclick="toggleMaximize">
-              <div class="titlebar-drag"></div>
+              <div class="titlebar-drag">
+                <div class="titlebar-brand">
+                  <img src="/icons/icon.svg" alt="墨阅" class="titlebar-logo" />
+                  <span class="titlebar-name">墨阅</span>
+                </div>
+              </div>
               <div class="titlebar-controls">
                 <button class="titlebar-btn" @click="minimizeWindow" title="最小化">
                   <svg width="14" height="14" viewBox="0 0 14 14"><line x1="3" y1="7" x2="11" y2="7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -22,16 +27,23 @@
 
             <div class="app-body">
               <nav class="app-sidebar" aria-label="主导航">
-                <div class="sidebar-logo">
-                  <img src="/icons/icon.svg" alt="墨阅" class="logo-icon" />
-                  <span class="logo-text">墨阅</span>
-                </div>
                 <div class="sidebar-menu" role="navigation">
                   <div v-for="item in navItems" :key="item.route" class="nav-item" :class="{ active: currentRoute === item.route }" role="button" @click="navigate(item.route)">
                     <n-icon :size="20" class="nav-icon"><component :is="item.icon" /></n-icon>
                     <span class="nav-label">{{ item.label }}</span>
                   </div>
                 </div>
+
+                <div class="sidebar-spacer"></div>
+
+                <SidebarCharacters
+                  :books-count="bookshelfStore.books.length"
+                  :today-read-count="readingStore.todayReadCount"
+                  :theme="readingStore.theme"
+                  @toggle-theme="(v: string) => readingStore.setTheme(v)"
+                  @open-book="openRandomBook"
+                />
+
                 <div class="sidebar-footer">
                   <div class="footer-version">v{{ appVersion }}</div>
                 </div>
@@ -69,6 +81,7 @@ import { useBookshelfStore, useReadingStore } from '@/store'
 import { ROUTES, APP_VERSION } from '@shared/constants'
 import BookDetail from '@/components/BookDetail.vue'
 import Reader from '@/components/Reader.vue'
+import SidebarCharacters from '@/components/SidebarCharacters.vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 
@@ -78,18 +91,27 @@ const bookshelfStore = useBookshelfStore()
 const readingStore = useReadingStore()
 const currentRoute = computed(() => route.name)
 
-const currentTheme = computed({ get: () => readingStore.theme, set: (val: string) => readingStore.setTheme(val) })
-
-const appVersion = APP_VERSION
-const effectiveTheme = ref('dark')
-const photoViewer = ref<InstanceType<typeof PhotoViewer> | null>(null)
-const isMaximized = ref(false)
-const downloadConfirm = ref<InstanceType<typeof DownloadConfirm> | null>(null)
-
 function resolveEffectiveTheme(theme: string): string {
   if (theme === 'system') return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   return theme
 }
+
+const initialResolved = resolveEffectiveTheme(readingStore.theme)
+document.documentElement.setAttribute('data-theme', initialResolved)
+
+const currentTheme = computed({
+  get: () => readingStore.theme,
+  set: (val: string) => {
+    readingStore.setTheme(val)
+    applyThemeToDOM(val)
+  }
+})
+
+const appVersion = APP_VERSION
+const effectiveTheme = ref(initialResolved)
+const photoViewer = ref<InstanceType<typeof PhotoViewer> | null>(null)
+const isMaximized = ref(false)
+const downloadConfirm = ref<InstanceType<typeof DownloadConfirm> | null>(null)
 
 function applyThemeToDOM(theme: string) {
   const resolved = resolveEffectiveTheme(theme)
@@ -97,13 +119,8 @@ function applyThemeToDOM(theme: string) {
   effectiveTheme.value = resolved
 }
 
-function setTheme(theme: string) {
-  readingStore.setTheme(theme)
-  applyThemeToDOM(theme)
-}
-
 const naiveTheme = computed(() => {
-  const t = resolveEffectiveTheme(currentTheme.value)
+  const t = effectiveTheme.value
   return t === 'dark' || t === 'sepia' ? darkTheme : lightTheme
 })
 
@@ -118,6 +135,13 @@ const navItems = [
   { route: ROUTES.SETTINGS, icon: SettingsOutline, label: '设置' },
 ]
 
+function openRandomBook() {
+  const books = bookshelfStore.books
+  if (books.length > 0) {
+    const idx = Math.floor(Math.random() * books.length)
+    bookshelfStore.openDetail(books[idx], null)
+  }
+}
 function navigate(routeName: string) { if (routeName !== currentRoute.value) router.push({ name: routeName }).catch(() => {}) }
 function minimizeWindow() { getCurrentWindow().minimize() }
 
@@ -169,6 +193,9 @@ watch(currentTheme, val => applyThemeToDOM(val))
 .app-shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; background: var(--bg-card); color: var(--text-primary); transition: background 0.3s ease, color 0.3s ease; }
 .titlebar { display: flex; align-items: stretch; height: 40px; min-height: 40px; background: var(--bg-card); flex-shrink: 0; z-index: 20; }
 .titlebar-drag { flex: 1; height: 100%; user-select: none; -webkit-app-region: drag; }
+.titlebar-brand { display: flex; align-items: center; gap: 10px; height: 100%; padding-left: 12px; }
+.titlebar-logo { width: 26px; height: 26px; flex-shrink: 0; }
+.titlebar-name { font-size: 15px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.04em; }
 .titlebar-controls { display: flex; gap: 0; flex-shrink: 0; height: 100%; -webkit-app-region: no-drag; }
 .titlebar-btn { width: 46px; height: 100%; border: none; background: transparent; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s; }
 .titlebar-btn svg { opacity: 0.7; }
@@ -176,19 +203,20 @@ watch(currentTheme, val => applyThemeToDOM(val))
 .titlebar-btn:hover svg { opacity: 1; }
 .titlebar-btn-close:hover { background: #c0392b; color: #fff; }
 .app-body { display: flex; flex: 1; height: calc(100vh - 40px); overflow: hidden; }
-.app-sidebar { display: flex; flex-direction: column; width: 200px; min-width: 200px; padding: 20px 16px; background: var(--bg-card); border-right: 1px solid var(--border-color); flex-shrink: 0; height: 100%; box-sizing: border-box; }
-.sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 0 8px 28px; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
-.logo-icon { width: 28px; height: 28px; flex-shrink: 0; }
-.logo-text { font-size: 16px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.04em; }
-.sidebar-menu { flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-md); cursor: pointer; min-height: 44px; transition: background 0.2s, color 0.2s; color: var(--text-muted); }
+.app-sidebar { display: flex; flex-direction: column; width: 200px; min-width: 200px; padding: 4px 16px 20px 16px; background: var(--bg-card); border-right: 1px solid var(--border-color); flex-shrink: 0; height: 100%; box-sizing: border-box; }
+.sidebar-menu { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 12px; border-radius: var(--radius-md); cursor: pointer; min-height: 48px; transition: background 0.2s, color 0.2s; color: var(--text-muted); }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-secondary); }
 .nav-item.active { background: var(--bg-active); color: var(--brand); font-weight: 500; }
 .nav-item.active .nav-icon { color: var(--brand); }
 .nav-icon { flex-shrink: 0; }
 .nav-label { font-size: 14px; font-weight: 500; }
-.sidebar-footer { padding-top: 16px; border-top: 1px solid var(--border-color); margin-top: auto; text-align: center; }
+
+.sidebar-spacer { flex: 1; }
+
+.sidebar-footer { padding: 12px 0 0 0; border-top: 1px solid var(--border-color); text-align: center; flex-shrink: 0; }
 .footer-version { font-size: 12px; color: var(--text-muted); opacity: 0.45; }
+
 .app-main { flex: 1; position: relative; overflow-y: auto; padding: 32px 40px 40px; background: var(--bg); min-width: 0; height: 100%; box-sizing: border-box; }
 .page-enter-active, .page-leave-active { transition: opacity 0.3s ease, transform 0.3s ease; }
 .page-enter-from { opacity: 0; transform: translateY(8px); }

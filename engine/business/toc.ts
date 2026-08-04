@@ -1,11 +1,8 @@
 import { emitLog } from '../event/index.js'
-// ============================================
-// 目录解析（完整对齐 Legado BookChapterList.kt）
-// ============================================
-
 import { getGlobalHttpClient } from '../network/client.js'
 import { getString, getElements } from '../core/rule-parser/index.js'
 import { analyzeUrl, resolveUrl } from '../core/url/index.js'
+import { parseSourceHeader } from './source-helper.js'
 import type { BookSource, Chapter } from '../../src/shared/types.js'
 import type { TocOptions } from '../types.js'
 
@@ -24,27 +21,6 @@ function needsAnalyzeUrl(url: string): boolean {
   return url.includes('@js:') || url.includes('<js>') || url.includes('{{')
 }
 
-async function parseHeader(source: BookSource, book: any): Promise<Record<string, string>> {
-  const result: Record<string, string> = {}
-  try {
-    if (source.header) {
-      if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) {
-        const { executeJs } = await import('../core/rule-parser/js.js')
-        const ctx = { source, baseUrl: source.bookSourceUrl || '', result: '', book: book || {} }
-        const headerResult = await executeJs('', source.header, ctx)
-        try { Object.assign(result, JSON.parse(headerResult)) } catch {
-          try { Object.assign(result, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {}
-        }
-      } else {
-        try { Object.assign(result, JSON.parse(source.header)) } catch {
-          try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {}
-        }
-      }
-    }
-  } catch {}
-  return result
-}
-
 async function fetchPage(
   httpClient: ReturnType<typeof getGlobalHttpClient>,
   url: string, headers: Record<string, string>,
@@ -54,22 +30,14 @@ async function fetchPage(
     if (needsAnalyzeUrl(url)) {
       const analysis = await analyzeUrl(url, { source, book: book || {}, baseUrl: source.bookSourceUrl || '', headerMap: headers })
       let body: string | null = null
-      if (analysis.method === 'POST' && analysis.body) {
-        body = typeof analysis.body === 'string' ? analysis.body : JSON.stringify(analysis.body)
-      }
-      const resp = await httpClient.request({
-        url: analysis.url, method: analysis.method, headers: analysis.headers,
-        body, timeout: 30000, useWebView: analysis.useWebView,
-        webJs: analysis.webJs, sourceType: source.bookSourceType ?? 0
-      })
+      if (analysis.method === 'POST' && analysis.body) body = typeof analysis.body === 'string' ? analysis.body : JSON.stringify(analysis.body)
+      const resp = await httpClient.request({ url: analysis.url, method: analysis.method, headers: analysis.headers, body, timeout: 30000, useWebView: analysis.useWebView, webJs: analysis.webJs, sourceType: source.bookSourceType ?? 0 })
       if (resp.status < 200 || resp.status >= 300) return null
       const html = resp.data as string
       if (!html || typeof html !== 'string') return null
       return { html, redirectUrl: resp.url && resp.url !== url ? resp.url : url }
     }
-    const resp = await httpClient.request({
-      url, method: 'GET', headers, timeout: 30000, sourceType: source.bookSourceType ?? 0
-    })
+    const resp = await httpClient.request({ url, method: 'GET', headers, timeout: 30000, sourceType: source.bookSourceType ?? 0 })
     if (resp.status < 200 || resp.status >= 300) return null
     const html = resp.data as string
     if (!html || typeof html !== 'string') return null
@@ -84,7 +52,13 @@ async function analyzeTocPage(
 ): Promise<{ chapters: Chapter[]; nextUrls: string[] }> {
   const chapters: Chapter[] = []
   const nextUrls: string[] = []
-  const baseCtx = { source: bookSource, baseUrl: bookSource.bookSourceUrl || baseUrl, book: book || {}, result: body }
+
+  const baseCtx = {
+    source: bookSource,
+    baseUrl: bookSource.bookSourceUrl || baseUrl,
+    book: book || {},
+    result: body,
+  }
 
   const isJson = isJsonString(body)
   const parsedData = isJson ? safeParseJson(body) : body
@@ -95,9 +69,7 @@ async function analyzeTocPage(
       const results = await getElements(parsedData, tocRule.nextTocUrl, { ...baseCtx, isUrl: true })
       if (Array.isArray(results)) {
         for (const item of results) {
-          if (item && typeof item === 'string' && item.trim() && item.trim() !== redirectUrl) {
-            nextUrls.push(item.trim())
-          }
+          if (item && typeof item === 'string' && item.trim() && item.trim() !== redirectUrl) nextUrls.push(item.trim())
         }
       } else if (results && typeof results === 'string' && results.trim() && results.trim() !== redirectUrl) {
         nextUrls.push(results.trim())
@@ -113,19 +85,39 @@ async function analyzeTocPage(
     const isVolumeRule = tocRule.isVolume || ''
     const upTimeRule = tocRule.updateTime || ''
 
+    const hasDeferredJs = urlRule.includes('@js:') || urlRule.includes('<js>')
+    let firstRule = ''
+    if (hasDeferredJs) {
+      const ruleParts = urlRule.split(/@js:|<js>/)
+      firstRule = (ruleParts[0] || '').trim()
+      console.log('[toc] deferredJs enabled, firstRule=' + firstRule + ' urlRule前50=' + urlRule.substring(0, 50))
+    }
+
     for (let index = 0; index < elements.length; index++) {
       const item = elements[index]
       if (item === null || item === undefined) continue
-      let safeItem: any = item
-      try { safeItem = JSON.parse(JSON.stringify(item)) } catch {}
-      const itemCtx = { ...baseCtx, result: safeItem, chapter: { url: redirectUrl } }
 
-      const title = await getString(safeItem, nameRule, itemCtx) || ''
+      const itemCtx = { ...baseCtx, result: item }
+
+      const title = await getString(item, nameRule, itemCtx) || ''
       if (!title) continue
 
-      let url = await getString(safeItem, urlRule, itemCtx) || ''
-      const info = upTimeRule ? await getString(safeItem, upTimeRule, itemCtx) || '' : ''
-      const isVolumeStr = isVolumeRule ? await getString(safeItem, isVolumeRule, itemCtx) || '' : ''
+      let url = ''
+      let deferredJs: string | undefined
+      let deferredResult: any
+
+      if (hasDeferredJs) {
+        if (firstRule) {
+          url = await getString(item, firstRule, itemCtx) || ''
+        }
+        deferredJs = urlRule
+        deferredResult = url
+      } else {
+        url = await getString(item, urlRule, itemCtx) || ''
+      }
+
+      const info = upTimeRule ? await getString(item, upTimeRule, itemCtx) || '' : ''
+      const isVolumeStr = isVolumeRule ? await getString(item, isVolumeRule, itemCtx) || '' : ''
       let isVolume = false; let tag = ''
       if (isVolumeStr === 'true') { isVolume = true; tag = info } else { tag = info }
       if (!url) url = isVolume ? title + index : redirectUrl
@@ -133,35 +125,28 @@ async function analyzeTocPage(
       chapters.push({
         id: chapters.length, title: String(title),
         url: resolveUrl(String(url), redirectUrl), index: chapters.length,
-        isVip: vipRule ? await getString(safeItem, vipRule, itemCtx) === 'true' : false,
-        isPay: payRule ? await getString(safeItem, payRule, itemCtx) === 'true' : false,
-        isVolume, tag
+        isVip: vipRule ? await getString(item, vipRule, itemCtx) === 'true' : false,
+        isPay: payRule ? await getString(item, payRule, itemCtx) === 'true' : false,
+        _deferredJs: deferredJs,
+        _deferredResult: deferredResult,
       } as any as Chapter)
     }
   }
   return { chapters, nextUrls }
 }
 
-function parseJsonChapters(list: any[], _rule: any, _source: BookSource, baseUrl: string): Chapter[] {
+function parseJsonChapters(list: any[], baseUrl: string): Chapter[] {
   const chapters: Chapter[] = []
   for (const item of list) {
     const title = item.chapterName || item.title || item.name || ''
     const url = item.chapterId ? '/chapter/' + item.chapterId : item.url || item.path || ''
-    if (title) chapters.push({
-      id: chapters.length, title: String(title),
-      url: resolveUrl(String(url), baseUrl), index: chapters.length,
-      isVip: !!(item.isFree === 0 || item.isVip), isPay: !!(item.isChapterBuy || item.isPay)
-    } as Chapter)
+    if (title) chapters.push({ id: chapters.length, title: String(title), url: resolveUrl(String(url), baseUrl), index: chapters.length, isVip: !!(item.isFree === 0 || item.isVip), isPay: !!(item.isChapterBuy || item.isPay) } as Chapter)
   }
   chapters.forEach((ch, idx) => { ch.index = idx; ch.id = idx })
   return chapters
 }
 
-async function applyFormatJs(
-  chapters: Chapter[], formatJs: string,
-  executor: (js: string, context: Record<string, any>) => Promise<string>,
-  source: BookSource
-): Promise<void> {
+async function applyFormatJs(chapters: Chapter[], formatJs: string, executor: (js: string, context: Record<string, any>) => Promise<string>, source: BookSource): Promise<void> {
   if (!formatJs || chapters.length === 0) return
   const jsCode = formatJs.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
   if (!jsCode) return
@@ -174,11 +159,7 @@ async function applyFormatJs(
   }
 }
 
-async function applyPreUpdateJs(
-  preUpdateJs: string,
-  executor: (js: string, context: Record<string, any>) => Promise<string>,
-  source: BookSource, book: any, tocUrl: string
-): Promise<void> {
+async function applyPreUpdateJs(preUpdateJs: string, executor: (js: string, context: Record<string, any>) => Promise<string>, source: BookSource, book: any, tocUrl: string): Promise<void> {
   if (!preUpdateJs) return
   const jsCode = preUpdateJs.replace(/^@js:\s*/, '').replace(/^<js>/, '').replace(/<\/js>$/, '').trim()
   if (!jsCode) return
@@ -191,22 +172,21 @@ function dedupChapters(chapters: Chapter[]): Chapter[] {
   return Array.from(seen.values())
 }
 
-export async function getToc(
-  source: BookSource, tocUrl: string, options: TocOptions = {}
-): Promise<Chapter[]> {
+export async function getToc(source: BookSource, tocUrl: string, options: TocOptions = {}): Promise<Chapter[]> {
   if (!tocUrl) return []
   const tocRule = source.ruleToc
   if (!tocRule || !tocRule.chapterList) return []
 
   emitLog('info', '[目录] 开始 url=' + tocUrl.substring(0, 100))
   const httpClient = getGlobalHttpClient()
-  const headers = await parseHeader(source, options.book || {})
+  const headers = await parseSourceHeader(source, options.book || {})
   const formatJsExecutor = options.formatJsExecutor
 
   if (tocRule.preUpdateJs && formatJsExecutor) {
     await applyPreUpdateJs(tocRule.preUpdateJs, formatJsExecutor, source, options.book || {}, tocUrl)
   }
 
+  console.log('[toc] chapterUrl规则=' + JSON.stringify(tocRule.chapterUrl))
   let listRule = tocRule.chapterList || ''
   let reverse = false
   if (listRule.startsWith('-')) { reverse = true; listRule = listRule.substring(1) }
@@ -250,7 +230,9 @@ export async function getToc(
       if (nextUrlList.has(u)) return []; nextUrlList.add(u)
       const result = await fetchPage(httpClient, u, headers, source, options.book || {})
       if (!result) return []
-      const { chapters: pc } = await analyzeTocPage(options.book || {}, u, result.redirectUrl, result.html, tocRule, listRule, source, false)
+      const { chapters: pc } = await analyzeTocPage(
+        options.book || {}, u, result.redirectUrl, result.html, tocRule, listRule, source, false
+      )
       return pc
     }))
     for (const chs of cr) chapterList.push(...chs)
@@ -261,7 +243,7 @@ export async function getToc(
     if (isJson) {
       const parsed = safeParseJson(html)
       if (parsed?.data?.list && Array.isArray(parsed.data.list)) {
-        chapterList.push(...parseJsonChapters(parsed.data.list, tocRule, source, redirectUrl))
+        chapterList.push(...parseJsonChapters(parsed.data.list, redirectUrl))
       }
     }
   }
@@ -280,3 +262,4 @@ export async function getToc(
   emitLog('info', '[目录] 目录总数:' + deduped.length)
   return deduped
 }
+

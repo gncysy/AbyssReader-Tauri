@@ -2,6 +2,8 @@
 // 书源辅助工具
 // ============================================
 
+import type { BookSource } from '../../src/shared/types.js'
+
 export function parseHeader(header: string | null | undefined): Record<string, string> | null {
   if (!header) return null
   if (typeof header !== 'string') return header as any
@@ -47,4 +49,32 @@ export function parseSourcesFromJson(jsonStr: any): any[] {
   }
 
   return []
+}
+
+// ============================================
+// 公共 parseHeader（所有 business 模块复用）
+// ============================================
+export async function parseSourceHeader(
+  source: BookSource,
+  book?: any
+): Promise<Record<string, string>> {
+  const result: Record<string, string> = {}
+  try {
+    if (source.header) {
+      if (source.header.startsWith('@js:') || source.header.startsWith('<js>')) {
+        const { executeJs } = await import('../core/rule-parser/js.js')
+        const headerResult = await executeJs(source.header, {
+          source, baseUrl: source.bookSourceUrl || '', result: '', book: book || {}
+        })
+        try { Object.assign(result, JSON.parse(headerResult)) } catch {
+          try { Object.assign(result, JSON.parse(headerResult.replace(/'/g, '"'))) } catch {}
+        }
+      } else {
+        try { Object.assign(result, JSON.parse(source.header)) } catch {
+          try { Object.assign(result, JSON.parse((source.header || '{}').replace(/'/g, '"'))) } catch {}
+        }
+      }
+    }
+  } catch {}
+  return result
 }

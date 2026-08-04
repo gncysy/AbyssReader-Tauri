@@ -25,7 +25,6 @@
             <button class="btn-primary" style="padding:5px 16px;font-size:12px" :disabled="saving" @click="saveEdit">{{ saving ? '保存中...' : '保存' }}</button>
           </div>
         </div>
-        <!-- 快捷输入工具栏 -->
         <div class="keyboard-assists">
           <button v-for="item in keyboardAssists" :key="item.key" class="btn-secondary" style="padding:3px 10px;font-size:11px" @click="insertAssist(item)">{{ item.key }}</button>
         </div>
@@ -80,6 +79,7 @@
             <div class="input-row">
               <input v-model="contentUrl" type="text" placeholder="输入章节URL..." class="debug-input" @keyup.enter="runContent" />
               <button class="btn-primary" :disabled="running" @click="runContent" style="padding:7px 22px;font-size:13px">{{ running ? '执行中...' : '获取正文' }}</button>
+              <button class="btn-secondary" :disabled="!contentResult" @click="openContentReader" style="padding:7px 14px;font-size:12px">开始阅读</button>
             </div>
             <div v-if="contentResult" class="debug-result" style="white-space:pre-wrap;max-height:300px">{{ contentResult.substring(0, 2000) }}</div>
           </div>
@@ -93,6 +93,7 @@
                 <button class="btn-secondary" @click="runPreset('ajax')" style="padding:5px 12px;font-size:11px">测试 ajax</button>
                 <button class="btn-secondary" @click="runPreset('b64')" style="padding:5px 12px;font-size:11px">测试 base64</button>
                 <button class="btn-secondary" @click="runPreset('all')" style="padding:5px 12px;font-size:11px">全部测试</button>
+                <button class="btn-secondary" @click="runPreset('api')" style="padding:5px 12px;font-size:11px">测试 API</button>
                 <button class="btn-secondary" @click="resetJsContext" style="padding:5px 12px;font-size:11px">重置上下文</button>
               </div>
               <div v-if="jsResult" class="debug-result" style="white-space:pre-wrap;word-break:break-all;max-height:400px">{{ jsResult }}</div>
@@ -129,25 +130,14 @@
               <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
                 <select v-model="logFilterModule" style="font-size:10px;padding:2px 4px;background:var(--bg-card);color:var(--text-muted);border:1px solid var(--border-color);border-radius:4px">
                   <option value="all">全部模块</option>
-                  <option value="explore">发现页</option>
-                  <option value="search">搜索</option>
-                  <option value="bookshelf">书架</option>
-                  <option value="reader">阅读器</option>
-                  <option value="source">书源管理</option>
-                  <option value="network">网络</option>
-                  <option value="engine">引擎</option>
-                  <option value="system">系统</option>
-                  <option value="ui">UI</option>
-                  <option value="storage">存储</option>
-                  <option value="login">登录</option>
-                  <option value="sync">同步</option>
-                  <option value="sandbox">沙箱</option>
+                  <option value="explore">发现页</option><option value="search">搜索</option><option value="bookshelf">书架</option>
+                  <option value="reader">阅读器</option><option value="source">书源管理</option><option value="network">网络</option>
+                  <option value="engine">引擎</option><option value="system">系统</option><option value="ui">UI</option>
+                  <option value="storage">存储</option><option value="login">登录</option><option value="sync">同步</option><option value="sandbox">沙箱</option>
                 </select>
                 <select v-model="logFilterSource" style="font-size:10px;padding:2px 4px;background:var(--bg-card);color:var(--text-muted);border:1px solid var(--border-color);border-radius:4px">
                   <option value="all">全部来源</option>
-                  <option value="rust">Rust</option>
-                  <option value="deno">Deno</option>
-                  <option value="frontend">前端</option>
+                  <option value="rust">Rust</option><option value="deno">Deno</option><option value="frontend">前端</option>
                 </select>
                 <button class="btn-secondary" @click="clearLogs" style="padding:2px 8px;font-size:10px">清空</button>
               </div>
@@ -164,6 +154,18 @@
         </div>
       </template>
     </div>
+
+    <Teleport to="body">
+      <div v-if="contentReaderVisible" class="content-reader-overlay" @click.self="contentReaderVisible = false">
+        <div class="content-reader-container">
+          <div class="content-reader-header">
+            <span>正文阅读</span>
+            <button class="btn-back-inline" @click="contentReaderVisible = false">关闭</button>
+          </div>
+          <div class="content-reader-body" v-html="contentReaderHtml"></div>
+        </div>
+      </div>
+    </Teleport>
   </Teleport>
 </template>
 
@@ -181,7 +183,6 @@ const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'select-
 
 const message = useMessage()
 const panelRef = ref<HTMLElement | null>(null)
-const editorRef = ref<HTMLTextAreaElement | null>(null)
 const logListRef = ref<HTMLElement | null>(null)
 const running = ref(false)
 const editMode = ref(false)
@@ -219,9 +220,9 @@ const netUrl = ref(''); const netStatus = ref(''); const netHeaders = ref(''); c
 const netUseWebView = ref(false); const netDuration = ref(0)
 const editJson = ref('')
 const editError = ref('')
-
-// 快捷输入
 const keyboardAssists = ref<any[]>([])
+const contentReaderVisible = ref(false)
+const contentReaderHtml = ref('')
 
 const allLogs = ref<LogEntry[]>([])
 const logFilterModule = ref<string>('all')
@@ -241,22 +242,11 @@ const sourceOptions = computed(() => {
   return opts
 })
 
-async function loadKeyboardAssists() {
-  try { keyboardAssists.value = (await store.get('keyboardAssists')) || [] } catch { keyboardAssists.value = [] }
-}
-
-function insertAssist(item: any) {
-  const textarea = editorRef.value; if (!textarea) return
-  const start = textarea.selectionStart; const end = textarea.selectionEnd
-  const text = editJson.value
-  editJson.value = text.substring(0, start) + item.value + text.substring(end)
-  nextTick(() => { textarea.focus(); textarea.setSelectionRange(start + item.value.length, start + item.value.length) })
-}
-
+async function loadKeyboardAssists() { try { keyboardAssists.value = (await store.get('keyboardAssists')) || [] } catch { keyboardAssists.value = [] } }
+function insertAssist(item: any) { const textarea = editorRef.value; if (!textarea) return; const start = textarea.selectionStart; const end = textarea.selectionEnd; const text = editJson.value; editJson.value = text.substring(0, start) + item.value + text.substring(end); nextTick(() => { textarea.focus(); textarea.setSelectionRange(start + item.value.length, start + item.value.length) }) }
 function clearLogs() { allLogs.value = [] }
 function onSourceChange(val: number) { selectedIndex.value = val; emit('select-source', val); clearAll() }
 function closePanel() { emit('update:visible', false) }
-
 function clearAll() { searchResult.value = []; tocResult.value = []; contentResult.value = ''; jsResult.value = ''; jsContextResult.value = ''; webviewResult.value = null; netBody.value = ''; netHeaders.value = ''; netStatus.value = '' }
 
 function openEditor() {
@@ -268,53 +258,64 @@ function openEditor() {
   loadKeyboardAssists()
 }
 
-async function saveEdit() {
-  try { JSON.parse(editJson.value); editError.value = '' } catch (err: any) { editError.value = 'JSON 格式错误: ' + err.message; return }
-  saving.value = true
-  try {
-    const sources: any[] = (await store.get('bookSource')) || []
-    const arr = Array.isArray(sources) ? sources : []
-    if (selectedIndex.value >= 0 && selectedIndex.value < arr.length) { arr[selectedIndex.value] = JSON.parse(editJson.value); await store.set('bookSource', arr) }
-    editMode.value = false; message.success('已保存')
-  } catch (err: any) { editError.value = '保存失败: ' + err.message }
-  finally { saving.value = false }
-}
+async function saveEdit() { try { JSON.parse(editJson.value); editError.value = '' } catch (err: any) { editError.value = 'JSON 格式错误: ' + err.message; return }; saving.value = true; try { const sources: any[] = (await store.get('bookSource')) || []; const arr = Array.isArray(sources) ? sources : []; if (selectedIndex.value >= 0 && selectedIndex.value < arr.length) { arr[selectedIndex.value] = JSON.parse(editJson.value); await store.set('bookSource', arr) }; editMode.value = false; message.success('已保存') } catch (err: any) { editError.value = '保存失败: ' + err.message } finally { saving.value = false } }
 
 async function runSearch() { if (selectedIndex.value < 0) { message.warning('请先选择书源'); return }; if (!searchKeyword.value.trim()) { message.warning('请输入关键词'); return }; running.value = true; searchResult.value = []; try { const arr = Array.isArray(props.sources) ? props.sources : []; const source = JSON.parse(JSON.stringify(arr[selectedIndex.value])); const { search: engineSearch } = await import('../../engine/business/search.js'); const books = await engineSearch(source, searchKeyword.value, { page: 1 }); if (Array.isArray(books) && books.length > 0) searchResult.value = books } catch (err: any) { message.error('搜索失败: ' + err.message) } finally { running.value = false } }
 async function runToc() { if (selectedIndex.value < 0) { message.warning('请先选择书源'); return }; if (!tocUrl.value.trim()) { message.warning('请输入URL'); return }; running.value = true; tocResult.value = []; try { const arr = Array.isArray(props.sources) ? props.sources : []; const source = JSON.parse(JSON.stringify(arr[selectedIndex.value])); const { getToc } = await import('../../engine/business/toc.js'); const chapters = await getToc(source, tocUrl.value, {}); if (Array.isArray(chapters) && chapters.length > 0) { for (let i = 0; i < Math.min(chapters.length, 20); i++) { const ch = chapters[i]; tocResult.value.push({ title: ch.title || '无标题', url: ch.url || '' }) } } } catch (err: any) { message.error('获取目录失败: ' + err.message) } finally { running.value = false } }
 async function runContent() { if (selectedIndex.value < 0) { message.warning('请先选择书源'); return }; if (!contentUrl.value.trim()) { message.warning('请输入URL'); return }; running.value = true; contentResult.value = ''; try { const arr = Array.isArray(props.sources) ? props.sources : []; const source = JSON.parse(JSON.stringify(arr[selectedIndex.value])); const { getContent } = await import('../../engine/business/content.js'); contentResult.value = await getContent(source, contentUrl.value, { bookKind: (source as any)?.kind, book: {} as any }) } catch (err: any) { message.error('获取正文失败: ' + err.message) } finally { running.value = false } }
+function openContentReader() {
+  contentReaderHtml.value = contentResult.value
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>').replace(/\u3000\u3000/g, '&emsp;&emsp;')
+  contentReaderVisible.value = true
+}
 async function runWebView() { if (!webviewUrl.value.trim()) { message.warning('请输入URL'); return }; running.value = true; webviewResult.value = null; const startTime = Date.now(); try { const sourceType = selectedIndex.value >= 0 ? (Array.isArray(props.sources) ? props.sources[selectedIndex.value]?.bookSourceType ?? 0 : 0) : 0; const html: string = await network.fetchWebView(webviewUrl.value.trim(), { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, webJs: webviewJs.value.trim() || undefined, timeout: (webviewTimeout.value || 30) * 1000, sourceType }); webviewDuration.value = Date.now() - startTime; webviewResult.value = typeof html === 'string' ? html : JSON.stringify(html) } catch (err: any) { webviewDuration.value = Date.now() - startTime; webviewResult.value = '错误: ' + (err?.message || String(err)) } finally { running.value = false } }
-async function runNet() { if (!netUrl.value.trim()) { message.warning('请输入URL'); return }; running.value = true; netStatus.value = ''; netHeaders.value = ''; netBody.value = ''; const startTime = Date.now(); try { if (netUseWebView.value) { const sourceType = selectedIndex.value >= 0 ? (Array.isArray(props.sources) ? props.sources[selectedIndex.value]?.bookSourceType ?? 0 : 0) : 0; const html: string = await network.fetchWebView(netUrl.value.trim(), { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, timeout: 30000, sourceType }); netDuration.value = Date.now() - startTime; netStatus.value = '200'; netBody.value = typeof html === 'string' ? html : JSON.stringify(html) } else { const { getGlobalHttpClient } = await import('../../engine/network/client.js'); const httpClient = getGlobalHttpClient(); let headers: Record<string, string> = {}; if (selectedIndex.value >= 0) { const arr = Array.isArray(props.sources) ? props.sources : []; const source = JSON.parse(JSON.stringify(arr[selectedIndex.value])); const { parseHeader } = await import('../../engine/business/toc.js'); headers = await parseHeader(source, {}) }; const response = await httpClient.request({ url: netUrl.value, method: 'GET', headers, timeout: 30000 }); netDuration.value = Date.now() - startTime; netStatus.value = String(response.status); netHeaders.value = JSON.stringify(response.headers, null, 2); netBody.value = response.data as string } } catch (err: any) { netDuration.value = Date.now() - startTime; netStatus.value = '错误'; netBody.value = err.message || String(err) } finally { running.value = false } }
+async function runNet() { if (!netUrl.value.trim()) { message.warning('请输入URL'); return }; running.value = true; netStatus.value = ''; netHeaders.value = ''; netBody.value = ''; const startTime = Date.now(); try { if (netUseWebView.value) { const sourceType = selectedIndex.value >= 0 ? (Array.isArray(props.sources) ? props.sources[selectedIndex.value]?.bookSourceType ?? 0 : 0) : 0; const html: string = await network.fetchWebView(netUrl.value.trim(), { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, timeout: 30000, sourceType }); netDuration.value = Date.now() - startTime; netStatus.value = '200'; netBody.value = typeof html === 'string' ? html : JSON.stringify(html) } else { const { getGlobalHttpClient } = await import('../../engine/network/client.js'); const httpClient = getGlobalHttpClient(); let headers: Record<string, string> = {}; if (selectedIndex.value >= 0) { const arr = Array.isArray(props.sources) ? props.sources : []; const source = JSON.parse(JSON.stringify(arr[selectedIndex.value])); const { parseSourceHeader } = await import('../../engine/business/toc.js'); headers = await parseSourceHeader(source, {}) }; const response = await httpClient.request({ url: netUrl.value, method: 'GET', headers, timeout: 30000 }); netDuration.value = Date.now() - startTime; netStatus.value = String(response.status); netHeaders.value = JSON.stringify(response.headers, null, 2); netBody.value = response.data as string } } catch (err: any) { netDuration.value = Date.now() - startTime; netStatus.value = '错误'; netBody.value = err.message || String(err) } finally { running.value = false } }
 
 const presets: Record<string, string> = {
-  base: `java.toast("hello"); java.log("hello");`,
-  ajax: `java.ajax("https://httpbin.org/get")`,
-  b64: `var e = java.base64Encode("hello"); JSON.stringify({ e, d: java.base64Decode(e) });`,
-  all: `var r = {}; r.b64 = java.base64Encode("h"); r.md5 = java.md5Encode("h"); r.time = java.timeFormat(1700000000000); r.uuid = java.randomUUID(); try { var a = java.ajax("https://httpbin.org/get"); r.ajaxOk = a.includes("httpbin"); } catch(e) { r.ajaxErr = e.message } java.put("k","v"); r.kv = java.get("k"); JSON.stringify(r, null, 2);`
+  base: 'java.toast("hello");\njava.log("hello");',
+  ajax: 'java.ajax("https://httpbin.org/get")',
+  b64: 'var e = java.base64Encode("hello");\nJSON.stringify({ e, d: java.base64Decode(e) });',
+  all: 'var r = {};\nr.b64 = java.base64Encode("h");\nr.md5 = java.md5Encode("h");\nr.time = java.timeFormat(1700000000000);\nr.uuid = java.randomUUID();\ntry {\n  var a = java.ajax("https://httpbin.org/get");\n  r.ajaxOk = a.includes("httpbin");\n} catch(e) {\n  r.ajaxErr = e.message\n}\njava.put("k","v");\nr.kv = java.get("k");\nJSON.stringify(r, null, 2);',
+  api: 'var r = {};\nr.t2s = java.t2s("繁體字測試");\nr.s2t = java.s2t("简体字测试");\nr.ua = java.userAgent || "N/A";\nr.baseUrl = baseUrl || "N/A";\nr.sourceKey = source?.bookSourceUrl || "N/A";\nr.encode = java.encodeURI("测试 编码");\nr.decode = java.decodeURI(r.encode);\nJSON.stringify(r, null, 2);'
 }
 function runPreset(name: string) { jsCode.value = presets[name] || '' }
 function resetJsContext() { jsContextResult.value = ''; jsResult.value = '' }
-async function runJs() { if (!jsCode.value.trim()) { message.warning('请输入代码'); return }; running.value = true; jsResult.value = ''; try { const arr = Array.isArray(props.sources) ? props.sources : []; const source = arr[selectedIndex.value] || {}; const prevResult = jsContextResult.value || ''; const res = await engine.executeJs(jsCode.value, { result: prevResult, src: prevResult, source: source || {}, baseUrl: (source || {}).bookSourceUrl || '', book: { kind: '123' }, key: '', page: 1 }); jsResult.value = typeof res === 'string' ? res : JSON.stringify(res, null, 2); if (jsResult.value.length === 0) jsResult.value = '返回空/undefined'; else jsContextResult.value = jsResult.value } catch (err: any) { jsResult.value = '' + (err?.message || String(err)) } finally { running.value = false } }
-
-function handleKeydown(e: KeyboardEvent) {
-  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
-  if (e.key === 'Escape' && props.visible) closePanel()
+async function runJs() {
+  if (!jsCode.value.trim()) { message.warning('请输入代码'); return }
+  running.value = true; jsResult.value = ''
+  try {
+    const code = jsCode.value.trim()
+    const arr = Array.isArray(props.sources) ? props.sources : []
+    const source = arr[selectedIndex.value] || {}
+    const prevResult = jsContextResult.value || ''
+    const res = await engine.executeJs(code, {
+      result: prevResult,
+      src: prevResult,
+      source: source || {},
+      baseUrl: (source || {}).bookSourceUrl || '',
+      book: { kind: '123' },
+      key: '',
+      page: 1
+    })
+    if (res && res.length > 0) {
+      jsResult.value = res
+      jsContextResult.value = res
+    } else {
+      jsResult.value = '返回空/undefined'
+    }
+  } catch (err: any) {
+    jsResult.value = '错误: ' + (err?.message || String(err))
+  } finally { running.value = false }
 }
+
+function handleKeydown(e: KeyboardEvent) { if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return; if (e.key === 'Escape' && props.visible) closePanel() }
 
 const logHandler = (entry: LogEntry) => { allLogs.value = [...allLogs.value, entry].slice(-1000) }
 let unsubscribe: (() => void) | null = null
 
-onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
-  unsubscribe = onLog(logHandler)
-  for (const entry of logHistory) { allLogs.value = [...allLogs.value, entry].slice(-1000) }
-})
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('mousemove', onDrag)
-  document.removeEventListener('mouseup', endDrag)
-  if (unsubscribe) { unsubscribe(); unsubscribe = null }
-})
+onMounted(() => { window.addEventListener('keydown', handleKeydown); unsubscribe = onLog(logHandler); for (const entry of logHistory) { allLogs.value = [...allLogs.value, entry].slice(-1000) } })
+onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); document.removeEventListener('mousemove', onDrag); document.removeEventListener('mouseup', endDrag); if (unsubscribe) { unsubscribe(); unsubscribe = null } })
 watch(() => props.sourceIndex, (val) => { if (val !== undefined && val >= 0) selectedIndex.value = val }, { immediate: true })
 </script>
 
@@ -367,4 +368,9 @@ watch(() => props.sourceIndex, (val) => { if (val !== undefined && val >= 0) sel
 .log-error .log-message { color: #e74c3c; }
 .log-warn .log-message { color: #d4a017; }
 .log-info .log-message { color: var(--text-secondary); }
+
+.content-reader-overlay { position: fixed; inset: 0; z-index: 99999; background: var(--bg); display: flex; align-items: stretch; justify-content: center; }
+.content-reader-container { width: 100%; max-width: 800px; display: flex; flex-direction: column; }
+.content-reader-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 500; color: var(--text-primary); flex-shrink: 0; }
+.content-reader-body { flex: 1; overflow-y: auto; padding: 24px 32px; font-size: 16px; line-height: 1.8; color: var(--text-primary); white-space: pre-wrap; }
 </style>

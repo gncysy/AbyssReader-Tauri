@@ -22,6 +22,7 @@ pub struct ChapterInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TxtTocRule {
     pub enable: bool,
     pub id: i64,
