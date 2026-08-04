@@ -69,3 +69,9 @@ out/
 build/
 release/
 debug/
+
+# 文本文件
+*.txt
+
+# Cargo 缓存
+.cargo/
