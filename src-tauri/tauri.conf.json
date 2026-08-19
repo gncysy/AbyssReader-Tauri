@@ -1,0 +1,42 @@
+{
+  "productName": "墨阅",
+  "version": "0.1.0",
+  "identifier": "com.abyss.reader.tauri",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg", "deb", "rpm", "appimage"],
+    "icon": [
+      "icons/512x512.png",
+      "icons/128x128.png",
+      "icons/32x32.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "copyright": "Copyright © 2025 墨阅",
+    "category": "public.app-category.reference",
+    "shortDescription": "桌面端小说阅读器，兼容开源阅读书源",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"]
+      }
+    },
+    "linux": {
+      "deb": {},
+      "rpm": {},
+      "appimage": {}
+    }
+  }
+}
